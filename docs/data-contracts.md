@@ -1,0 +1,202 @@
+# Data Contracts
+
+This document defines Phineas's domain data and privacy boundaries. These are
+conceptual contracts, not DynamoDB records or JSON wire formats. They will later
+be mapped to Python/Pydantic models, JSON responses, and DynamoDB attributes.
+
+## Shared Types
+
+| Type | Allowed values or format | Notes |
+| --- | --- | --- |
+| `Decimal` | Non-negative base-10 monetary value | Never use binary floating point for authoritative money. |
+| `Direction` | `inflow`, `outflow` | Kept separate from amount and transaction kind. |
+| `AccountType` | `checking`, `credit_card` | Extend only when a supported adapter requires another type. |
+| `Currency` | `USD` | The MVP rejects unsupported currencies. |
+| `TransactionKind` | `purchase`, `payment`, `refund`, `transfer`, `income`, `fee`, `interest`, `cash_withdrawal`, `unknown` | Describes how money moved, not what was purchased. |
+| `ClassificationSource` | `source`, `rule`, `laya`, `unknown` | Records where a classification came from. |
+| `SpendingCategory` | Controlled category value, including `unknown` | The initial category taxonomy will be defined with the deterministic analysis rules. |
+| `Cadence` | `weekly`, `monthly`, `annual`, `unknown` | Used for recurring-charge findings. |
+| `NarrativeStatus` | `generated`, `unavailable`, `skipped` | Allows deterministic analysis to succeed when Bedrock is unavailable or disabled. |
+| `DocumentOrigin` | `bundled_sample`, `private_upload` | Never contains an uploaded filename. |
+| `date` | Calendar date | A transaction's statement-local posted date; it has no time or timezone. |
+| `datetime` | UTC, timezone-aware timestamp | Used for session and report lifecycle values. |
+| `YearMonth` | `YYYY-MM` | Used for monthly aggregates. |
+
+Classification scores are optional approximate values from `0.0` through
+`1.0`. They are not authoritative financial values, so a floating-point type is
+acceptable. A score is present only when the classification source produces a
+meaningful score. Deterministic rules and source-provided classifications must
+not invent probability-like scores.
+
+## Parsed Transaction
+
+`ParsedTransaction` is the canonical output of a source-specific CSV adapter.
+It exists only in process memory during ingestion. It may contain sensitive
+source text and must never be written to DynamoDB, disk, logs, model context, or
+an API response.
+
+| Field | Type | Required? | Purpose | Privacy notes |
+| --- | --- | --- | --- | --- |
+| `posted_date` | `date` | Yes | Records the statement-local date on which the transaction posted. | Necessary for recurrence, duplicate, and trend analysis. |
+| `original_description` | `str` | Yes | Preserves source text long enough to redact, normalize, and classify it. | Sensitive. May contain names, locations, reference numbers, account fragments, or behavioral information. Discard after sanitization. |
+| `amount` | `Decimal` | Yes | Records the transaction's non-negative monetary magnitude. | Sensitive financial data. |
+| `direction` | `Direction` | Yes | States whether money entered or left the account. | Sensitive financial data. Reject the statement if the adapter cannot determine it safely. |
+| `account_type` | `AccountType` | Yes | Provides context needed to interpret signs and distinguish purchases from payments or deposits. | Sensitive financial context, but required for correct analysis. |
+| `currency` | `Currency` | Yes | Makes the USD-only invariant explicit. | Reject unsupported currencies; never silently reinterpret them as USD. |
+| `source_transaction_type` | `str \| None` | No | Preserves an institution-provided type as transient evidence for classification. | Potentially sensitive source text. Discard after classification. |
+| `input_row_number` | `int` | Yes | Identifies a malformed source row in a safe validation response. | Operational metadata only. Do not log or return the row's contents. |
+
+### Validation policy
+
+- Amounts must be non-negative and represented with `Decimal`.
+- Direction is explicit; amount signs are normalized by the source adapter.
+- Required text must be present and nonblank.
+- The parser collects all row-level validation errors and rejects the entire
+  statement. Phineas must not silently analyze a partial statement.
+- Validation responses may contain row numbers and safe reason codes, but not
+  source row contents.
+- Source filenames, account numbers, balances, customer names, addresses, and
+  institution transaction IDs are not part of this contract.
+
+## Sanitized Transaction
+
+`SanitizedTransaction` is the short-lived analytical record that may be stored
+in DynamoDB during an active session. It contains no raw description, source
+identifier, filename, account number, balance, customer identity, or address.
+
+| Field | Type | Required? | Purpose | Privacy notes |
+| --- | --- | --- | --- | --- |
+| `transaction_id` | `str` | Yes | Identifies the transaction inside one session and supports evidence links. | Newly generated by Phineas. It is not a source transaction ID and has no meaning outside the session. |
+| `posted_date` | `date` | Yes | Supports ordering, recurrence, duplicate, and trend analysis. | Sensitive when combined with amounts and behavior. |
+| `amount` | `Decimal` | Yes | Provides the non-negative monetary magnitude used by deterministic calculations. | Sensitive financial data. |
+| `direction` | `Direction` | Yes | Distinguishes inflows from outflows. | Sensitive financial data. |
+| `account_type` | `AccountType` | Yes | Supports correct spending and exclusion policies without retaining an account identifier. | Sensitive financial context. |
+| `currency` | `Currency` | Yes | Preserves the validated monetary unit. | Always `USD` in the MVP. |
+| `transaction_kind` | `TransactionKind` | Yes | Prevents payments, transfers, refunds, and income from being miscounted as purchases. | Sensitive behavioral data. `unknown` is valid and must remain visible. |
+| `kind_source` | `ClassificationSource` | Yes | Makes the kind classification explainable and testable. | Safe operational metadata when isolated; sensitive in the full transaction record. |
+| `kind_score` | `float \| None` | No | Stores a meaningful classifier score when one is available. | Approximate metadata, constrained to `0.0..1.0`. Do not invent scores for rules. |
+| `merchant_id` | `str` | Yes | Groups related transactions using a session-scoped anonymous identifier. | Stable only within one session and safe only when separated from its lookup value. |
+| `normalized_merchant` | `str` | Yes | Supports exact merchant grouping and first-party display. | Sensitive behavioral data. It never enters Bedrock, MCP output, or logs. |
+| `spending_category` | `SpendingCategory` | Yes | Supports category totals and trends independently of transaction kind. | Sensitive behavioral data; categories can reveal health, religion, politics, legal matters, and personal habits. |
+| `category_source` | `ClassificationSource` | Yes | Makes category assignment explainable and testable. | Safe operational metadata when isolated; sensitive in the full transaction record. |
+| `category_score` | `float \| None` | No | Stores a meaningful category-classifier score when one is available. | Approximate metadata, constrained to `0.0..1.0`. |
+| `analysis_flags` | `list[AnalysisFlag]` | Yes | Records controlled analytical conditions without retaining source text. | Required but may be empty. Values come from an enum; flags never embed descriptions, names, or amounts. |
+
+### Classification boundary
+
+- Deterministic rules classify clear cases first.
+- Laya may receive only a transient PII-redacted description when rules cannot
+  classify a transaction. It does not receive unredacted text or DynamoDB
+  access, and its input is never persisted or logged.
+- Bedrock never receives raw or redacted transaction descriptions.
+- Uncertain classifications remain `unknown`; Phineas does not manufacture
+  certainty.
+
+Example transient Laya input:
+
+```text
+Raw:      ZELLE PAYMENT TO JANE DOE 847291
+Redacted: ZELLE PAYMENT TO [PERSON] [REFERENCE]
+```
+
+### Merchant visibility
+
+| Destination | Merchant ID | Normalized merchant |
+| --- | --- | --- |
+| Short-lived DynamoDB session | Yes | Yes |
+| First-party REST/UI response to the session holder | Yes | Yes, when useful to the user |
+| MCP tool result | Yes | No |
+| Bedrock input or output | Yes | No |
+| Application or infrastructure logs | No | No |
+
+Bedrock narrative output should use structured `merchant_id` references. The
+application may resolve those identifiers to merchant display names only when
+rendering a first-party response. Do not perform arbitrary search-and-replace
+over generated prose.
+
+## Analysis Session
+
+`AnalysisSession` describes the lifecycle of short-lived sanitized state. It
+does not represent resumable user memory.
+
+| Field | Type | Required? | Purpose | Privacy notes |
+| --- | --- | --- | --- | --- |
+| `session_id` | `str` | Yes | Provides a high-entropy opaque capability for locating a session. | Security-sensitive bearer credential. Never log it in full or include it redundantly in report bodies. |
+| `created_at` | `datetime` | Yes | Establishes the session's absolute lifetime. | Operational metadata linked to sensitive session state. |
+| `last_activity_at` | `datetime` | Yes | Records the last authorized interaction that refreshed the idle window. | Operational metadata linked to sensitive session state. |
+| `idle_expires_at` | `datetime` | Yes | Enforces expiration after 30 minutes without authorized activity. | Application access ends at this timestamp even if DynamoDB TTL cleanup is pending. |
+| `absolute_expires_at` | `datetime` | Yes | Enforces expiration four hours after creation regardless of activity. | Cannot be extended by ordinary interactions. |
+| `document_origin` | `DocumentOrigin` | Yes | Distinguishes bundled samples from private local uploads. | Never contains a filename, path, customer identifier, or bank account label. |
+| `sample_id` | `str \| None` | No | Identifies the selected bundled synthetic dataset. | Allowed only for `bundled_sample`; never derived from a private filename. |
+| `schema_version` | `str` | Yes | Identifies the stored-session contract used to serialize and read the data. | Operational metadata. |
+
+### Session behavior
+
+- Any authorized request addressed to a valid, active session refreshes the
+  30-minute idle window, including an out-of-scope question.
+- Invalid, unauthorized, malformed, and rate-limited requests do not refresh
+  activity.
+- The four-hour absolute expiration never moves.
+- Expiration is derived from timestamps; no persisted status field is needed.
+- Explicit purge deletes the session records. A deleted record cannot retain a
+  `purged` status.
+- Expired data becomes inaccessible immediately at the application layer.
+  DynamoDB TTL is fallback cleanup for abandoned records, not an exact deletion
+  guarantee.
+- Expired, purged, malformed, and nonexistent session identifiers receive the
+  same external response, for example: `This session is unavailable or has
+  expired. Start a new analysis.`
+- The hosted synthetic demo does not require user accounts. Private uploads are
+  local-only for the MVP. A future hosted private-upload mode would require
+  authentication and explicit session ownership.
+
+## Analysis Report
+
+`AnalysisReport` is the complete deterministic result plus an optional Bedrock
+narrative. It is sanitized but still sensitive financial and behavioral data.
+Every collection is required and may be empty, which gives API and MCP clients
+a stable response shape.
+
+| Field | Type | Required? | Purpose | Privacy notes |
+| --- | --- | --- | --- | --- |
+| `subscriptions` | `list[SubscriptionFinding]` | Yes | Reports probable recurring charges and annualized cost. | Sensitive aggregate behavior. |
+| `price_changes` | `list[PriceChangeFinding]` | Yes | Reports recurring charges whose observed price changed. | Sensitive aggregate behavior. |
+| `fees` | `list[FeeFinding]` | Yes | Reports controlled fee types and totals. | Sensitive financial data. |
+| `possible_duplicates` | `list[DuplicateFinding]` | Yes | Reports deterministic evidence for likely duplicate charges. | Sensitive financial data. |
+| `spending_by_category_month` | `list[CategoryMonthTotal]` | Yes | Provides stable category-by-month totals and counts. | Sensitive behavioral profile. |
+| `notable_changes` | `list[NotableChange]` | Yes | Reports movements that exceeded documented deterministic thresholds. | Sensitive behavioral profile. |
+| `unknown_classifications` | `UnknownClassificationSummary` | Yes | Discloses classification coverage and uncertainty. | Sensitive aggregate data; external projections omit individual rows. |
+| `exclusion_summary` | `ExclusionSummary` | Yes | Explains which kinds were excluded from particular calculations and why. | Sensitive aggregate data. |
+| `narrative` | `str \| None` | No | Provides an aggregate-grounded plain-language explanation. | Generated only from the Bedrock-safe report projection. Never authoritative for calculations. |
+| `narrative_status` | `NarrativeStatus` | Yes | States whether narrative generation succeeded, was unavailable, or was intentionally skipped. | Operational metadata. |
+| `metadata` | `ReportMetadata` | Yes | Describes report version, analysis version, time range, currency, and coverage. | Sensitive in context. Does not contain the session credential. |
+
+### Finding contracts
+
+| Contract | Required fields | Notes |
+| --- | --- | --- |
+| `SubscriptionFinding` | `merchant_id`, `cadence`, `observed_charge_count`, `typical_amount`, `annualized_cost`, `first_observed_date`, `last_observed_date`, `evidence_transaction_ids` | Evidence IDs are session-local and omitted from MCP and Bedrock projections. First-party rendering may resolve the merchant ID to its normalized display name. |
+| `PriceChangeFinding` | `merchant_id`, `previous_amount`, `current_amount`, `absolute_change`, `percentage_change`, `effective_date`, `evidence_transaction_ids` | All changes are calculated deterministically with `Decimal`. |
+| `FeeFinding` | `fee_type`, `transaction_count`, `total_amount`, `evidence_transaction_ids` | `fee_type` is a controlled value such as `overdraft` or `foreign_transaction`, never the original bank description. No account number or user-provided account label is included. |
+| `DuplicateFinding` | `merchant_id`, `amount`, `posted_dates`, `evidence_transaction_ids`, `reason_code` | A finding remains explicitly "possible" unless deterministic policy establishes certainty. |
+| `CategoryMonthTotal` | `category`, `month`, `transaction_count`, `total_amount` | Payments and transfers are not silently counted as spending; the applied policy is documented in the exclusion summary. |
+| `NotableChange` | `metric`, `comparison_periods`, `previous_value`, `current_value`, `absolute_change`, `percentage_change`, `reason_code` | Thresholds and calculation methods are versioned deterministic policy. |
+| `UnknownClassificationSummary` | `transaction_count`, `total_inflow`, `total_outflow`, `unknown_kind_count`, `unknown_category_count` | First-party diagnostics may link to session-local evidence. MCP and Bedrock receive aggregate counts and totals only. |
+| `ExclusionSummary` | `policy_version`, `excluded_by_kind`, `excluded_by_reason` | Values are aggregate counts and totals, not prose containing source descriptions. |
+| `ReportMetadata` | `report_version`, `analysis_version`, `generated_at`, `period_start`, `period_end`, `currency`, `input_transaction_count`, `analyzed_transaction_count` | Does not contain `session_id`, filename, account identifier, or customer identity. |
+
+### Output projections
+
+The internal report is not returned unchanged to every consumer.
+
+| Projection | May contain | Must omit |
+| --- | --- | --- |
+| First-party REST/UI | Full report, normalized merchant display names, session-local evidence IDs | Raw descriptions, source identifiers, account identifiers, PII |
+| MCP tools | Aggregate findings and anonymous merchant IDs | Normalized merchant names, individual transaction rows, evidence transaction IDs, raw/redacted descriptions |
+| Bedrock narrative input | Selected aggregates, categories, periods, anonymous merchant IDs, deterministic findings | Normalized merchant names, individual transactions, evidence IDs, raw/redacted descriptions, session credential |
+| Logs and metrics | Request timing, safe result counts, status/reason codes, model latency and token usage | Merchant IDs or names, descriptions, amounts, categories tied to a session, session credential, account/customer data |
+
+Bedrock should return structured findings that reference anonymous merchant IDs.
+Application code may resolve those IDs for the first-party UI after the model
+response is received. Narrative generation failure never invalidates or blocks
+the deterministic report.

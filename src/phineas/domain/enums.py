@@ -37,3 +37,27 @@ class ClassificationSource(StrEnum):
 class DocumentOrigin(StrEnum):
     BUNDLED_SAMPLE = "bundled_sample"
     PRIVATE_UPLOAD = "private_upload"
+
+
+class SpendingCategory(StrEnum):
+    GROCERIES = "groceries"
+    DINING = "dining"
+    TRANSPORTATION = "transportation"
+    HOUSING = "housing"
+    UTILITIES = "utilities"
+    HEALTHCARE = "healthcare"
+    SHOPPING = "shopping"
+    ENTERTAINMENT = "entertainment"
+    TRAVEL = "travel"
+    EDUCATION = "education"
+    PERSONAL_CARE = "personal_care"
+    FINANCIAL_SERVICES = "financial_services"
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
+class AnalysisFlag(StrEnum):
+    RECURRING_CANDIDATE = "recurring_candidate"
+    PRICE_CHANGE_CANDIDATE = "price_change_candidate"
+    FEE_CANDIDATE = "fee_candidate"
+    DUPLICATE_CANDIDATE = "duplicate_candidate"

@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from phineas.classification.transaction_kinds import (
     RuleBasedTransactionKindClassifier,
+    TransactionKindClassifier,
 )
 from phineas.domain.enums import (
     AccountType,
@@ -85,3 +86,13 @@ def test_contradictory_direction_remains_unknown() -> None:
 
     assert result.kind is TransactionKind.UNKNOWN
     assert result.source is ClassificationSource.UNKNOWN
+
+
+def test_rule_classifier_satisfies_protocol() -> None:
+    classifier: TransactionKindClassifier = (
+        RuleBasedTransactionKindClassifier()
+    )
+
+    result = classifier.classify(parsed_transaction())
+
+    assert result.kind is TransactionKind.PURCHASE

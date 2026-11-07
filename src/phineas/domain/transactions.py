@@ -80,14 +80,23 @@ class SanitizedTransaction(BaseModel):
     kind_source: ClassificationSource
     kind_score: ClassificationScore | None = None
 
-    merchant_id: NonBlankText
-    normalized_merchant: NonBlankText = Field(repr=False)
+    merchant_id: NonBlankText | None
+    normalized_merchant: NonBlankText | None = Field(repr=False)
 
     spending_category: SpendingCategory
     category_source: ClassificationSource
     category_score: ClassificationScore | None = None
 
     analysis_flags: tuple[AnalysisFlag, ...]
+
+    @model_validator(mode="after")
+    def validate_merchant_identity(self) -> Self:
+        if (self.merchant_id is None) != (self.normalized_merchant is None):
+            raise ValueError(
+                "merchant_id and normalized_merchant must be provided together"
+            )
+
+        return self
 
     @model_validator(mode="after")
     def validate_classification_scores(self) -> Self:

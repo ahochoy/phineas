@@ -75,8 +75,8 @@ identifier, filename, account number, balance, customer identity, or address.
 | `transaction_kind` | `TransactionKind` | Yes | Prevents payments, transfers, refunds, and income from being miscounted as purchases. | Sensitive behavioral data. `unknown` is valid and must remain visible. |
 | `kind_source` | `ClassificationSource` | Yes | Makes the kind classification explainable and testable. | Safe operational metadata when isolated; sensitive in the full transaction record. |
 | `kind_score` | `float \| None` | No | Stores a meaningful classifier score when one is available. | Approximate metadata, constrained to `0.0..1.0`. Do not invent scores for rules. |
-| `merchant_id` | `str` | Yes | Groups related transactions using a session-scoped anonymous identifier. | Stable only within one session and safe only when separated from its lookup value. |
-| `normalized_merchant` | `str` | Yes | Supports exact merchant grouping and first-party display. | Sensitive behavioral data. It never enters Bedrock, MCP output, or logs. |
+| `merchant_id` | `str \| None` | Yes | Groups identified merchants using a session-scoped anonymous identifier. | Null when identity cannot be established; never group null identities together. |
+| `normalized_merchant` | `str \| None` | Yes | Supports exact merchant grouping and first-party display. Must be present or null together with `merchant_id`. | Sensitive behavioral data. It never enters Bedrock, MCP output, or logs. |
 | `spending_category` | `SpendingCategory` | Yes | Supports category totals and trends independently of transaction kind. | Sensitive behavioral data; categories can reveal health, religion, politics, legal matters, and personal habits. |
 | `category_source` | `ClassificationSource` | Yes | Makes category assignment explainable and testable. | Safe operational metadata when isolated; sensitive in the full transaction record. |
 | `category_score` | `float \| None` | No | Stores a meaningful category-classifier score when one is available. | Approximate metadata, constrained to `0.0..1.0`. |

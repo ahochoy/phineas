@@ -25,6 +25,12 @@ private operation.
 
 ## Collaboration Model
 
+Current coaching focus: the agent implements routine Python, tests, and business
+logic when advancing agreed features. Reserve hands-on pair-programming exercises
+primarily for Terraform, Bedrock, AgentCore, and application deployment. Review
+consequential implementation and privacy decisions together without assigning
+basic Python exercises.
+
 This project is intentionally a learning experience. The human developer is
 the primary implementer and should usually remain at the keyboard. The agent's
 default role is senior-technologist coach and reviewer:

@@ -2,6 +2,7 @@
 
 from typing import Literal
 from datetime import datetime
+import os
 
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, ConfigDict
@@ -10,6 +11,8 @@ from starlette.requests import Request
 
 from phineas.application import IngestionSummary
 from phineas.analysis import AnalysisResult
+from phineas.bedrock import AgentCoreNarrativeProvider
+from phineas.narratives import NarrativeProvider, NarrativeResult, generate_highlights
 from phineas.samples import list_sample_ids, summarize_sample
 from phineas.sessions import InMemorySessionStore, SessionService, SessionStore, SessionUnavailable
 
@@ -30,9 +33,18 @@ class SessionCreated(BaseModel):
     absolute_expires_at: datetime
 
 
-def create_app(store: SessionStore | None = None) -> FastAPI:
+def create_app(store: SessionStore | None = None, narrative_provider: NarrativeProvider | None = None) -> FastAPI:
     app = FastAPI(title="Phineas", version="0.1.0")
     sessions = SessionService(store if store is not None else InMemorySessionStore())
+
+    @app.post("/sessions/{session_id}/narrative", response_model=NarrativeResult)
+    def narrative(session_id: str) -> NarrativeResult:
+        analysis = sessions.analysis(session_id)
+        result = generate_highlights(analysis, narrative_provider)
+        # Do not return financial results if the session was purged or expired
+        # while a remote invocation was in flight.
+        sessions.summary(session_id)
+        return result
 
     @app.middleware("http")
     async def prevent_caching(request: Request, call_next):
@@ -85,4 +97,10 @@ def create_app(store: SessionStore | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+def create_configured_app() -> FastAPI:
+    arn = os.environ.get("PHINEAS_HARNESS_ARN")
+    provider = AgentCoreNarrativeProvider(arn, os.environ.get("AWS_REGION", "us-east-2")) if arn else None
+    return create_app(narrative_provider=provider)
+
+
+app = create_configured_app()

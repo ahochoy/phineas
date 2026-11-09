@@ -14,13 +14,7 @@ resource "aws_bedrockagentcore_harness" "phineas" {
   }
 
   system_prompt {
-    text = <<-EOT
-      You are Phineas, a bounded personal-finance analysis assistant.
-
-      For this infrastructure smoke test, respond briefly. Do not claim access
-      to financial statements, transactions, tools, or capabilities that have
-      not been provided.
-    EOT
+    text = file("${path.module}/prompts/narrative.txt")
   }
 
   max_iterations  = 3

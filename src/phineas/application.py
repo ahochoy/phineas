@@ -1,6 +1,7 @@
 """Local application service shared by future CLI, REST, and MCP transports."""
 
 from collections import Counter
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import TextIO
 
@@ -8,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from phineas.classification.transaction_kinds import RuleBasedTransactionKindClassifier
 from phineas.domain.enums import Currency, Direction, TransactionKind
+from phineas.domain.transactions import SanitizedTransaction
 from phineas.ingestion.canonical_csv import parse_canonical_csv
 from phineas.ingestion.merchant_registry import MerchantRegistry
 from phineas.ingestion.sanitization import TransactionSanitizer
@@ -28,13 +30,20 @@ class IngestionSummary(BaseModel):
 
 
 def summarize_canonical_statement(stream: TextIO) -> IngestionSummary:
+    return summarize_transactions(ingest_canonical_statement(stream))
+
+
+def ingest_canonical_statement(stream: TextIO) -> tuple[SanitizedTransaction, ...]:
     # A fresh registry prevents identity linkage between application calls.
     sanitizer = TransactionSanitizer(
         RuleBasedTransactionKindClassifier(), MerchantRegistry()
     )
-    transactions = [
+    return tuple(
         sanitizer.sanitize(row) for row in parse_canonical_csv(stream)
-    ]
+    )
+
+
+def summarize_transactions(transactions: Sequence[SanitizedTransaction]) -> IngestionSummary:
     kinds = Counter(transaction.transaction_kind for transaction in transactions)
     return IngestionSummary(
         currency=Currency.USD,

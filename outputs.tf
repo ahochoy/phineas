@@ -22,3 +22,18 @@ output "sessions_table_arn" {
   description = "ARN used to scope application session-storage permissions."
   value       = aws_dynamodb_table.sessions.arn
 }
+
+output "api_repository_url" {
+  description = "ECR repository URL used to tag and push application images."
+  value       = aws_ecr_repository.api.repository_url
+}
+
+output "api_repository_arn" {
+  description = "ECR repository ARN used for permission scoping."
+  value       = aws_ecr_repository.api.arn
+}
+
+output "api_function_name" {
+  description = "Lambda function name used for private invocation tests."
+  value       = aws_lambda_function.api.function_name
+}

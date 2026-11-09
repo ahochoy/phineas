@@ -1,0 +1,27 @@
+{
+  "version": "2.0",
+  "routeKey": "$default",
+  "rawPath": "/health",
+  "rawQueryString": "",
+  "headers": {
+    "host": "localhost"
+  },
+  "requestContext": {
+    "accountId": "local-test",
+    "apiId": "local-test",
+    "domainName": "localhost",
+    "domainPrefix": "localhost",
+    "http": {
+      "method": "GET",
+      "path": "/health",
+      "protocol": "HTTP/1.1",
+      "sourceIp": "127.0.0.1",
+      "userAgent": "phineas-smoke-test"
+    },
+    "requestId": "health-smoke-test",
+    "routeKey": "$default",
+    "stage": "$default",
+    "timeEpoch": 0
+  },
+  "isBase64Encoded": false
+}

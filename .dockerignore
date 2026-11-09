@@ -1,0 +1,11 @@
+# Allowlist the build context. State, credentials, local envs, fixtures, and
+# private files never reach the Docker builder, even when untracked by Git.
+**
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!uv.lock
+!src/
+!src/**
+src/**/__pycache__/
+src/**/*.pyc

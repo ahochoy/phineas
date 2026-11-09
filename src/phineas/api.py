@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from phineas.application import IngestionSummary
+from phineas.analysis import AnalysisResult
 from phineas.samples import list_sample_ids, summarize_sample
 from phineas.sessions import InMemorySessionStore, SessionService, SessionStore, SessionUnavailable
 
@@ -59,6 +60,10 @@ def create_app(store: SessionStore | None = None) -> FastAPI:
     def purge_session(session_id: str) -> Response:
         sessions.purge(session_id)
         return Response(status_code=204)
+
+    @app.get("/sessions/{session_id}/analysis", response_model=AnalysisResult)
+    def session_analysis(session_id: str) -> AnalysisResult:
+        return sessions.analysis(session_id)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

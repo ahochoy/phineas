@@ -7,6 +7,17 @@ from phineas.domain.transactions import SanitizedTransaction
 
 
 _SAMPLES = {
+    "analysis-demo": (
+        "posted_date,description,amount,direction,account_type,currency,transaction_type\n"
+        "2026-01-02,MERCHANT: Example Streaming,12.99,outflow,credit_card,USD,purchase\n"
+        "2026-02-02,MERCHANT: Example Streaming,12.99,outflow,credit_card,USD,purchase\n"
+        "2026-03-02,MERCHANT: Example Streaming,12.99,outflow,credit_card,USD,purchase\n"
+        "2026-03-05,MERCHANT: Sample Shop,20.00,outflow,credit_card,USD,purchase\n"
+        "2026-03-05,MERCHANT: Sample Shop,20.00,outflow,credit_card,USD,purchase\n"
+        "2026-03-06,Monthly fee,3.00,outflow,credit_card,USD,fee\n"
+        "2026-03-06,Interest charge,1.25,outflow,credit_card,USD,interest\n"
+        "2026-03-07,Card payment,100.00,inflow,credit_card,USD,payment\n"
+    ),
     "credit-card-demo": (
         "posted_date,description,amount,direction,account_type,currency,transaction_type\n"
         "2026-01-02,MERCHANT: Example Streaming | REF: synthetic-001,12.99,outflow,credit_card,USD,purchase\n"

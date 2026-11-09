@@ -6,7 +6,7 @@ from phineas.api import create_app
 def test_health_and_sample_discovery() -> None:
     with TestClient(create_app()) as client:
         assert client.get("/health").json() == {"status": "ok"}
-        assert client.get("/samples").json() == ["credit-card-demo"]
+        assert set(client.get("/samples").json()) == {"credit-card-demo", "analysis-demo"}
 
 
 def test_sample_summary_returns_exact_aggregate_values() -> None:

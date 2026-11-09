@@ -10,6 +10,7 @@ from typing import Protocol
 from phineas.application import IngestionSummary, summarize_transactions
 from phineas.domain.transactions import SanitizedTransaction
 from phineas.samples import ingest_sample
+from phineas.analysis import AnalysisResult, analyze_transactions
 
 
 class SessionUnavailable(ValueError):
@@ -96,3 +97,6 @@ class SessionService:
 
     def purge(self, session_id: str) -> None:
         self._store.purge(session_id)
+
+    def analysis(self, session_id: str) -> AnalysisResult:
+        return analyze_transactions(self._store.access(session_id).transactions)

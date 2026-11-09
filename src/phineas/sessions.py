@@ -18,6 +18,14 @@ class SessionUnavailable(ValueError):
         super().__init__("session_unavailable")
 
 
+class SessionStoreError(Exception):
+    """Operational failure; contains no request or provider details."""
+
+
+class SessionCapacityExceeded(ValueError):
+    """Statement exceeds the current atomic-storage size policy."""
+
+
 @dataclass(frozen=True)
 class SessionRecord:
     session_id: str = field(repr=False)

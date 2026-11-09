@@ -12,9 +12,11 @@ from starlette.requests import Request
 from phineas.application import IngestionSummary
 from phineas.analysis import AnalysisResult
 from phineas.bedrock import AgentCoreNarrativeProvider
+from phineas.dynamodb_sessions import DynamoDBSessionStore
 from phineas.narratives import NarrativeProvider, NarrativeResult, generate_highlights
+from phineas.questions import QuestionRequest, QuestionResponse, SUGGESTED_QUESTIONS, answer_question
 from phineas.samples import list_sample_ids, summarize_sample
-from phineas.sessions import InMemorySessionStore, SessionService, SessionStore, SessionUnavailable
+from phineas.sessions import InMemorySessionStore, SessionService, SessionStore, SessionUnavailable, SessionStoreError, SessionCapacityExceeded
 
 
 class SampleSummaryRequest(BaseModel):
@@ -36,6 +38,24 @@ class SessionCreated(BaseModel):
 def create_app(store: SessionStore | None = None, narrative_provider: NarrativeProvider | None = None) -> FastAPI:
     app = FastAPI(title="Phineas", version="0.1.0")
     sessions = SessionService(store if store is not None else InMemorySessionStore())
+
+    @app.exception_handler(SessionStoreError)
+    async def store_unavailable(request: Request, error: SessionStoreError) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": "session_store_unavailable"})
+
+    @app.exception_handler(SessionCapacityExceeded)
+    async def capacity_exceeded(request: Request, error: SessionCapacityExceeded) -> JSONResponse:
+        return JSONResponse(status_code=413, content={"detail": "statement_capacity_exceeded"})
+
+    @app.get("/questions/suggestions", response_model=list[str])
+    def suggested_questions() -> list[str]:
+        return list(SUGGESTED_QUESTIONS)
+
+    @app.post("/sessions/{session_id}/questions", response_model=QuestionResponse)
+    def question(session_id: str, request: QuestionRequest) -> QuestionResponse:
+        result = answer_question(sessions.analysis(session_id), request.question, narrative_provider)
+        sessions.summary(session_id)
+        return result
 
     @app.post("/sessions/{session_id}/narrative", response_model=NarrativeResult)
     def narrative(session_id: str) -> NarrativeResult:
@@ -100,7 +120,9 @@ def create_app(store: SessionStore | None = None, narrative_provider: NarrativeP
 def create_configured_app() -> FastAPI:
     arn = os.environ.get("PHINEAS_HARNESS_ARN")
     provider = AgentCoreNarrativeProvider(arn, os.environ.get("AWS_REGION", "us-east-2")) if arn else None
-    return create_app(narrative_provider=provider)
+    table_name = os.environ.get("PHINEAS_SESSIONS_TABLE")
+    store = DynamoDBSessionStore(table_name, os.environ.get("AWS_REGION", "us-east-2")) if table_name else None
+    return create_app(store=store, narrative_provider=provider)
 
 
 app = create_configured_app()

@@ -71,9 +71,12 @@ def build_fact_cards(analysis: AnalysisResult) -> tuple[FactCard, ...]:
 
 
 def generate_highlights(analysis: AnalysisResult, provider: NarrativeProvider | None) -> NarrativeResult:
+    return select_highlights(build_fact_cards(analysis), provider)
+
+
+def select_highlights(facts: Sequence[FactCard], provider: NarrativeProvider | None) -> NarrativeResult:
     if provider is None:
         return NarrativeResult(narrative_status="skipped")
-    facts = build_fact_cards(analysis)
     # Fail before dispatch if a statement would exceed this first bounded slice.
     if len(facts) > 100:
         return NarrativeResult(narrative_status="unavailable")

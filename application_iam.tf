@@ -41,18 +41,6 @@ data "aws_iam_policy_document" "api_execution" {
   }
 
   statement {
-    sid    = "InvokePhineasHarness"
-    effect = "Allow"
-
-    actions = [
-      "bedrock-agentcore:InvokeHarness",
-      "bedrock-agentcore:InvokeAgentRuntime",
-    ]
-
-    resources = [aws_bedrockagentcore_harness.phineas.arn]
-  }
-
-  statement {
     sid    = "WriteApplicationLogs"
     effect = "Allow"
 

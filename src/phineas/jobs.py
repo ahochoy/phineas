@@ -17,6 +17,7 @@ from phineas.sessions import SessionStore, SessionUnavailable, utc_now
 MAX_ATTEMPTS = 3
 LEASE = timedelta(seconds=150)
 MAX_PENDING_AGE = timedelta(minutes=25)
+MAX_JOBS_PER_SESSION = 10
 
 
 class JobUnavailable(ValueError):
@@ -26,6 +27,11 @@ class JobUnavailable(ValueError):
 
 class JobConflict(ValueError):
     """Idempotency key reused for a different intent."""
+
+
+class JobLimitExceeded(ValueError):
+    def __init__(self) -> None:
+        super().__init__("question_job_limit_reached")
 
 
 class QueueUnavailable(Exception):
@@ -123,6 +129,8 @@ class InMemoryJobStore:
                 if existing.intent is not intent:
                     raise JobConflict()
                 return existing
+            if sum(sid == session_id for sid, _ in self._jobs) >= MAX_JOBS_PER_SESSION:
+                raise JobLimitExceeded()
             job = Job(session_id, request_id, intent, self._clock(), session.absolute_expires_at)
             self._jobs[key] = job
             return job

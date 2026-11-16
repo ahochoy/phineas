@@ -17,7 +17,7 @@ from phineas.dynamodb_sessions import DynamoDBSessionStore
 from phineas.dynamodb_jobs import DynamoDBJobStore
 from phineas.narratives import NarrativeProvider, NarrativeResult, generate_highlights
 from phineas.questions import QuestionRequest, QuestionResponse, SUGGESTED_QUESTIONS, answer_question
-from phineas.jobs import JobConflict, JobUnavailable, JobView, QueueUnavailable, QuestionJobService, SubmitQuestion, WorkerRetry
+from phineas.jobs import JobConflict, JobLimitExceeded, JobUnavailable, JobView, QueueUnavailable, QuestionJobService, SubmitQuestion, WorkerRetry
 from phineas.sqs_jobs import SqsJobQueue
 from phineas.samples import list_sample_ids, summarize_sample
 from phineas.sessions import InMemorySessionStore, SessionService, SessionStore, SessionUnavailable, SessionStoreError, SessionCapacityExceeded
@@ -43,6 +43,10 @@ def create_app(store: SessionStore | None = None, narrative_provider: NarrativeP
                job_service: QuestionJobService | None = None) -> FastAPI:
     app = FastAPI(title="Phineas", version="0.1.0")
     sessions = SessionService(store if store is not None else InMemorySessionStore())
+
+    @app.exception_handler(JobLimitExceeded)
+    async def job_limit(request: Request, error: JobLimitExceeded) -> JSONResponse:
+        return JSONResponse(status_code=429, content={"detail": "question_job_limit_reached"})
 
     @app.exception_handler(WorkerRetry)
     async def job_busy(request: Request, error: WorkerRetry) -> JSONResponse:
@@ -86,12 +90,16 @@ def create_app(store: SessionStore | None = None, narrative_provider: NarrativeP
 
     @app.post("/sessions/{session_id}/questions", response_model=QuestionResponse)
     def question(session_id: str, request: QuestionRequest) -> QuestionResponse:
+        if job_service is not None:
+            raise HTTPException(status_code=409, detail="async_questions_required")
         result = answer_question(sessions.analysis(session_id), request.question, narrative_provider)
         sessions.summary(session_id)
         return result
 
     @app.post("/sessions/{session_id}/narrative", response_model=NarrativeResult)
     def narrative(session_id: str) -> NarrativeResult:
+        if job_service is not None:
+            raise HTTPException(status_code=409, detail="async_questions_required")
         analysis = sessions.analysis(session_id)
         result = generate_highlights(analysis, narrative_provider)
         # Do not return financial results if the session was purged or expired

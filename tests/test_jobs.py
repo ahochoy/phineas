@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from phineas.api import create_app
 from phineas.jobs import (
-    InMemoryJobStore, JobConflict, JobMessage, JobUnavailable, QueueUnavailable,
+    MAX_JOBS_PER_SESSION, InMemoryJobStore, JobConflict, JobLimitExceeded, JobMessage, JobUnavailable, QueueUnavailable,
     QuestionJobService, QuestionWorker, SubmitQuestion, WorkerRetry,
 )
 from phineas.narratives import NarrativeUnavailable
@@ -200,3 +200,59 @@ def test_repeated_worker_crashes_exhaust_attempts(setup) -> None:
     result = service.poll(sid, job.job_id)
     assert result.state == "failed"
     assert result.error_code == "attempts_exhausted"
+
+
+def test_lifetime_job_limit_preserves_replays_and_session_isolation(setup):
+    _, sessions, sid, jobs, _, _, _, _ = setup
+    ids = [uuid4() for _ in range(MAX_JOBS_PER_SESSION)]
+    for job_id in ids:
+        jobs.create(sid, job_id, QuestionIntent.FEES)
+    with pytest.raises(JobLimitExceeded):
+        jobs.create(sid, uuid4(), QuestionIntent.FEES)
+    assert jobs.create(sid, ids[0], QuestionIntent.FEES).job_id == ids[0]
+    with pytest.raises(JobConflict):
+        jobs.create(sid, ids[0], QuestionIntent.SUBSCRIPTIONS)
+    other = sessions.create("empty", ())
+    assert jobs.create(other.session_id, uuid4(), QuestionIntent.FEES).state == "pending"
+
+
+def test_failed_jobs_do_not_refund_lifetime_budget(setup):
+    clock, _, sid, jobs, _, _, _, _ = setup
+    for _ in range(MAX_JOBS_PER_SESSION):
+        jobs.create(sid, uuid4(), QuestionIntent.UNSUPPORTED)
+    clock.now += timedelta(minutes=25)
+    with pytest.raises(JobLimitExceeded):
+        jobs.create(sid, uuid4(), QuestionIntent.FEES)
+
+
+def test_http_limit_does_not_enqueue_or_extend_idle_deadline(setup):
+    clock, sessions, sid, _, queue, _, service, _ = setup
+    with TestClient(create_app(sessions, job_service=service)) as client:
+        for _ in range(MAX_JOBS_PER_SESSION):
+            response = client.post(f"/sessions/{sid}/question-jobs", json={
+                "request_id": str(uuid4()), "question": "Explain fees"})
+            assert response.status_code == 202
+        idle = sessions.peek(sid).idle_expires_at
+        clock.now += timedelta(minutes=1)
+        response = client.post(f"/sessions/{sid}/question-jobs", json={
+            "request_id": str(uuid4()), "question": "Explain fees"})
+        assert response.status_code == 429
+        assert response.json() == {"detail": "question_job_limit_reached"}
+        assert response.headers["cache-control"] == "no-store"
+        assert "retry-after" not in response.headers
+        assert queue.enqueue.call_count == MAX_JOBS_PER_SESSION
+        assert sessions.peek(sid).idle_expires_at == idle
+        assert client.get(f"/sessions/{sid}/analysis").status_code == 200
+        assert client.delete(f"/sessions/{sid}").status_code == 204
+
+
+def test_async_configuration_blocks_sync_inference_bypass(setup):
+    _, sessions, sid, _, _, provider, service, _ = setup
+    with TestClient(create_app(sessions, narrative_provider=provider, job_service=service)) as client:
+        question = client.post(f"/sessions/{sid}/questions", json={"question": "Explain fees"})
+        narrative = client.post(f"/sessions/{sid}/narrative")
+        for response in (question, narrative):
+            assert response.status_code == 409
+            assert response.json() == {"detail": "async_questions_required"}
+            assert response.headers["cache-control"] == "no-store"
+    provider.select.assert_not_called()

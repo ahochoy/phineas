@@ -72,7 +72,8 @@ class DynamoDBSessionStore:
             "created_at": now.isoformat(), "last_activity_at": now.isoformat(),
             "idle_expires_at": record.idle_expires_at.isoformat(),
             "absolute_expires_at": absolute.isoformat(), "expires_at": int(absolute.timestamp()),
-            "sample_id": sample_id, "transaction_count": len(transactions), "revision": 0}
+            "sample_id": sample_id, "transaction_count": len(transactions), "revision": 0,
+            "question_job_count": 0}
         items = [metadata] + [{"pk": metadata["pk"], "sk": f"TRANSACTION#{row.transaction_id}",
             "expires_at": metadata["expires_at"], "payload": row.model_dump_json()}
             for row in transactions]

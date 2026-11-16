@@ -78,9 +78,69 @@ def verify_deployment(request: Callable[..., dict], *,
     print("Post-purge session and job rejection: passed")
 
 
+def verify_admission(request: Callable[..., dict]) -> None:
+    """Check the deployed lifetime allowance without requesting model output."""
+    created = request("POST", "/sessions", {"sample_id": "analysis-demo"})
+    check(created["status"] == 201, "session_creation_failed")
+    session_id = created["body"]["session_id"]
+    print("Fresh session creation: passed")
+    first_job = None
+    first_body = None
+
+    try:
+        # Check the question route first: older API images return a fixed scope
+        # response for this unsupported question, so stop before testing the
+        # narrative route if async-only protection is missing.
+        question = request("POST", f"/sessions/{session_id}/questions",
+            {"question": "Tell me a joke"})
+        check(question == {"status": 409, "body": {"detail": "async_questions_required"}},
+            "synchronous_question_bypass_open")
+        narrative = request("POST", f"/sessions/{session_id}/narrative")
+        check(narrative == {"status": 409, "body": {"detail": "async_questions_required"}},
+            "synchronous_narrative_bypass_open")
+        print("Synchronous inference routes blocked: passed")
+
+        path = f"/sessions/{session_id}/question-jobs"
+        for _ in range(10):
+            body = {"request_id": str(uuid4()), "question": "Tell me a joke"}
+            submitted = request("POST", path, body)
+            check(submitted["status"] == 202, "admission_below_limit_failed")
+            if first_job is None:
+                first_job = submitted["body"]["job_id"]
+                first_body = body
+        print("Ten distinct jobs accepted: passed")
+
+        replay = request("POST", path, first_body)
+        check(replay["status"] == 202 and replay["body"]["job_id"] == first_job,
+            "replay_at_capacity_failed")
+        print("Replay at capacity: passed")
+
+        rejected = request("POST", path,
+            {"request_id": str(uuid4()), "question": "Tell me a joke"})
+        check(rejected == {"status": 429, "body": {"detail": "question_job_limit_reached"}},
+            "eleventh_job_not_rejected")
+        print("Eleventh distinct job rejected: passed")
+        check(request("GET", f"/sessions/{session_id}/analysis")["status"] == 200,
+            "analysis_unavailable_at_capacity")
+        check(request("GET", f"/sessions/{session_id}/jobs/{first_job}")["status"] == 200,
+            "job_unavailable_at_capacity")
+        print("Analysis and existing job remain accessible: passed")
+    finally:
+        purged = request("DELETE", f"/sessions/{session_id}")
+        check(purged["status"] == 204, "session_purge_failed")
+        print("Session purge: passed")
+
+    for path in (f"/sessions/{session_id}/summary", f"/sessions/{session_id}/jobs/{first_job}"):
+        check(request("GET", path) == {"status": 404, "body": {"detail": "session_unavailable"}},
+            "post_purge_access_failed")
+    print("Post-purge session and job rejection: passed")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Private synthetic async deployment smoke test")
     parser.add_argument("function_name")
+    parser.add_argument("--admission-only", action="store_true",
+        help="Check admission limits using unsupported questions instead of model generation")
     args = parser.parse_args()
     template = json.loads((Path(__file__).resolve().parents[1] / "events/health.json").read_text())
     # One attempt: never silently repeat a mutating HTTP operation after an
@@ -131,7 +191,10 @@ def main() -> int:
         }
 
     try:
-        verify_deployment(request)
+        if args.admission_only:
+            verify_admission(request)
+        else:
+            verify_deployment(request)
         return 0
     except RuntimeError as error:
         print(f"Deployment check failed: {error}")

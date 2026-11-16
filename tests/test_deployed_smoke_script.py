@@ -71,3 +71,81 @@ def test_failed_submission_still_purges():
     with pytest.raises(RuntimeError, match="^job_submission_failed$"):
         smoke.verify_deployment(request)
     assert request.call_args.args[0] == "DELETE"
+
+
+def admission_responses():
+    blocked = {"status": 409, "body": {"detail": "async_questions_required"}}
+    return [
+        {"status": 201, "body": {"session_id": "PRIVATE_SESSION"}},
+        blocked, blocked,
+        *[{"status": 202, "body": {"job_id": f"PRIVATE_JOB_{i}"}} for i in range(10)],
+        {"status": 202, "body": {"job_id": "PRIVATE_JOB_0"}},
+        {"status": 429, "body": {"detail": "question_job_limit_reached"}},
+        {"status": 200, "body": {}},
+        {"status": 200, "body": {}},
+        {"status": 204, "body": None},
+        {"status": 404, "body": {"detail": "session_unavailable"}},
+        {"status": 404, "body": {"detail": "session_unavailable"}},
+    ]
+
+
+def test_admission_checker_preserves_replay_id_and_safe_output(capsys):
+    request = Mock(side_effect=admission_responses())
+    smoke.verify_admission(request)
+    calls = request.call_args_list
+    assert calls[3].args[2] == calls[13].args[2]
+    ids = [calls[i].args[2]["request_id"] for i in range(3, 13)]
+    assert len(set(ids)) == 10
+    assert calls[14].args[2]["request_id"] not in ids
+    assert all(calls[i].args[2]["question"] == "Tell me a joke" for i in range(3, 15))
+    assert calls[17].args[0] == "DELETE"
+    output = capsys.readouterr().out
+    assert "Eleventh distinct job rejected: passed" in output
+    assert "PRIVATE" not in output
+
+
+@pytest.mark.parametrize("index,reason", [
+    (1, "synchronous_question_bypass_open"),
+    (2, "synchronous_narrative_bypass_open"),
+    (3, "admission_below_limit_failed"),
+    (13, "replay_at_capacity_failed"),
+    (14, "eleventh_job_not_rejected"),
+])
+def test_admission_checker_purges_on_failed_gate(index, reason):
+    data = admission_responses()
+    data[index] = {"status": 200, "body": {}}
+    request = Mock(side_effect=data[:index + 1] + [{"status": 204, "body": None}])
+    with pytest.raises(RuntimeError, match=f"^{reason}$"):
+        smoke.verify_admission(request)
+    assert request.call_args.args[0] == "DELETE"
+
+
+def test_admission_checker_against_real_local_api():
+    from fastapi.testclient import TestClient
+    from phineas.api import create_app
+    from phineas.jobs import InMemoryJobStore, QuestionJobService
+    from phineas.sessions import InMemorySessionStore
+
+    sessions = InMemorySessionStore()
+    queue = Mock()
+    provider = Mock()
+    service = QuestionJobService(sessions, InMemoryJobStore(sessions), queue)
+    with TestClient(create_app(sessions, narrative_provider=provider, job_service=service)) as client:
+        def request(method, path, body=None):
+            response = client.request(method, path, json=body) if body is not None else client.request(method, path)
+            return {"status": response.status_code, "body": response.json() if response.content else None}
+        smoke.verify_admission(request)
+    provider.select.assert_not_called()
+    assert queue.enqueue.call_count == 11  # Ten jobs plus one pending replay.
+
+
+def test_admission_flag_selects_checker_without_aws_calls(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["test_deployed_api.py", "phineas-api", "--admission-only"])
+    from unittest.mock import patch
+    with patch.object(smoke, "verify_admission") as admission, \
+            patch.object(smoke, "verify_deployment") as deployment, \
+            patch.object(smoke.boto3, "client") as client:
+        assert smoke.main() == 0
+        admission.assert_called_once()
+        deployment.assert_not_called()
+        client.assert_not_called()

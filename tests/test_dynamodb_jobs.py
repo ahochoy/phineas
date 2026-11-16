@@ -11,7 +11,7 @@ from moto import mock_aws
 from phineas.api import create_configured_app
 from phineas.dynamodb_jobs import DynamoDBJobStore
 from phineas.dynamodb_sessions import DynamoDBSessionStore
-from phineas.jobs import JobConflict, JobMessage, JobUnavailable, QuestionJobService, QuestionWorker, SubmitQuestion, WorkerRetry
+from phineas.jobs import MAX_JOBS_PER_SESSION, JobConflict, JobLimitExceeded, JobMessage, JobUnavailable, QuestionJobService, QuestionWorker, SubmitQuestion, WorkerRetry
 from phineas.narratives import NarrativeUnavailable
 from phineas.questions import QuestionIntent
 from phineas.samples import ingest_sample
@@ -181,3 +181,76 @@ def test_configured_http_submission_reaches_sqs_and_durable_worker(setup, monkey
         assert result.json()["result"]["facts"][0]["fact_id"] == "fee"
         assert client.delete(f"/sessions/{sid}").status_code == 204
         assert client.get(f"/sessions/{sid}/jobs/{job_id}").json() == {"detail": "session_unavailable"}
+
+
+def test_durable_admission_limit_replays_and_failure_do_not_refund(setup):
+    clock, sessions, sid, jobs, _, _, _, table = setup
+    ids = [uuid4() for _ in range(MAX_JOBS_PER_SESSION)]
+    for job_id in ids:
+        jobs.create(sid, job_id, QuestionIntent.FEES)
+    other = DynamoDBJobStore(sessions, clock=lambda: clock[0])
+    assert other.create(sid, ids[0], QuestionIntent.FEES).job_id == ids[0]
+    with pytest.raises(JobConflict):
+        other.create(sid, ids[0], QuestionIntent.SUBSCRIPTIONS)
+    with pytest.raises(JobLimitExceeded):
+        other.create(sid, uuid4(), QuestionIntent.FEES)
+    clock[0] += timedelta(minutes=25)
+    assert jobs.get(sid, ids[0]).state == "failed"
+    with pytest.raises(JobLimitExceeded):
+        jobs.create(sid, uuid4(), QuestionIntent.FEES)
+    assert sessions._metadata(sid)["question_job_count"] == MAX_JOBS_PER_SESSION
+    assert len([row for row in table.scan()["Items"] if row["sk"].startswith("JOB#")]) == MAX_JOBS_PER_SESSION
+
+
+def test_duplicate_put_rolls_back_counter_increment(setup):
+    _, sessions, sid, jobs, _, _, _, _ = setup
+    job = jobs.create(sid, uuid4(), QuestionIntent.FEES)
+    assert jobs._write(job, None) is False
+    assert sessions._metadata(sid)["question_job_count"] == 1
+    claim = jobs.claim(sid, job.job_id)
+    assert claim is not None
+    assert jobs.finish(claim, None)
+    assert sessions._metadata(sid)["question_job_count"] == 1
+
+
+def test_competing_writer_takes_last_slot_between_read_and_transaction(setup):
+    clock, sessions, sid, jobs, _, _, _, table = setup
+    for _ in range(MAX_JOBS_PER_SESSION - 1):
+        jobs.create(sid, uuid4(), QuestionIntent.FEES)
+    original_write = jobs._write
+    competitor = DynamoDBJobStore(sessions, clock=lambda: clock[0])
+
+    def competing_write(job, revision):
+        competitor.create(sid, uuid4(), QuestionIntent.FEES)
+        return original_write(job, revision)
+
+    rejected_id = uuid4()
+    with patch.object(jobs, "_write", side_effect=competing_write):
+        with pytest.raises(JobLimitExceeded):
+            jobs.create(sid, rejected_id, QuestionIntent.FEES)
+    assert sessions._metadata(sid)["question_job_count"] == MAX_JOBS_PER_SESSION
+    assert "Item" not in table.get_item(Key=jobs._key(sid, rejected_id))
+
+
+def test_old_session_without_counter_fails_closed_but_existing_job_is_readable(setup):
+    _, sessions, sid, jobs, _, _, _, table = setup
+    job = jobs.create(sid, uuid4(), QuestionIntent.FEES)
+    table.update_item(Key=sessions._key(sid), UpdateExpression="REMOVE question_job_count")
+    assert jobs.create(sid, job.job_id, QuestionIntent.FEES).job_id == job.job_id
+    with pytest.raises(SessionStoreError):
+        jobs.create(sid, uuid4(), QuestionIntent.FEES)
+    assert jobs.get(sid, job.job_id).state == "pending"
+    sessions.purge(sid)
+    assert table.scan()["Items"] == []
+
+
+def test_session_counter_is_independent_and_does_not_change_activity(setup):
+    clock, sessions, sid, jobs, _, _, _, _ = setup
+    first = sessions.peek(sid)
+    clock[0] += timedelta(minutes=1)
+    jobs.create(sid, uuid4(), QuestionIntent.FEES)
+    assert sessions.peek(sid).idle_expires_at == first.idle_expires_at
+    other = sessions.create("empty", ())
+    jobs.create(other.session_id, uuid4(), QuestionIntent.FEES)
+    assert sessions._metadata(sid)["question_job_count"] == 1
+    assert sessions._metadata(other.session_id)["question_job_count"] == 1

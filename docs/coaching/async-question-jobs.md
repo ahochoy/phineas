@@ -147,7 +147,8 @@ interrupted-purge recovery, and HTTP submission through an emulated SQS queue to
 the worker and result polling. They do not prove live SQS/Lambda delivery, DLQ
 routing, production concurrency, or IAM permissions. Those require deployment
 checks in the next slice. Per-session job admission limits and public rate/cost
-controls remain work before exposing the demo publicly.
+controls remain work before exposing the demo publicly. Local admission controls
+and the remaining launch checks are tracked in [demo-gates.md](../demo-gates.md).
 
 Handler tests also verify partial success responses, safe envelope errors,
 malformed-body retry, duplicate delivery, lease contention, model retry/exhaustion,

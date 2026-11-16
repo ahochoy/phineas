@@ -9,7 +9,10 @@ from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import TypeAdapter, ValidationError
 
 from phineas.dynamodb_sessions import DynamoDBSessionStore
-from phineas.jobs import LEASE, MAX_ATTEMPTS, MAX_PENDING_AGE, Job, JobConflict, JobUnavailable, WorkerRetry
+from phineas.jobs import (
+    LEASE, MAX_ATTEMPTS, MAX_JOBS_PER_SESSION, MAX_PENDING_AGE,
+    Job, JobConflict, JobLimitExceeded, JobUnavailable, WorkerRetry,
+)
 from phineas.questions import QuestionIntent, QuestionResponse
 from phineas.sessions import SessionStoreError, SessionUnavailable, utc_now
 
@@ -66,13 +69,24 @@ class DynamoDBJobStore:
             if revision is not None:
                 put["ExpressionAttributeValues"] = {":revision": revision}
             client = self._sessions._table().meta.client
+            validity = "attribute_exists(pk) AND attribute_not_exists(purging) AND idle_expires_at > :now AND absolute_expires_at > :now"
+            session_action = {"ConditionCheck": {"TableName": self._sessions._name,
+                "Key": self._sessions._key(job.session_id),
+                "ConditionExpression": validity,
+                "ExpressionAttributeValues": {":now": now}}}
+            if revision is None:
+                # A new job and its lifetime slot are committed together.
+                # Never default a missing counter to zero: legacy jobs might
+                # already exist and must not silently bypass the new limit.
+                session_action = {"Update": {"TableName": self._sessions._name,
+                    "Key": self._sessions._key(job.session_id),
+                    "UpdateExpression": "ADD question_job_count :one",
+                    "ConditionExpression": validity + " AND question_job_count >= :zero AND question_job_count < :limit",
+                    "ExpressionAttributeValues": {":now": now, ":one": 1,
+                        ":zero": 0, ":limit": MAX_JOBS_PER_SESSION}}}
             try:
                 client.transact_write_items(TransactItems=[
-                    {"ConditionCheck": {"TableName": self._sessions._name,
-                        "Key": self._sessions._key(job.session_id),
-                        "ConditionExpression": "attribute_exists(pk) AND attribute_not_exists(purging) AND idle_expires_at > :now AND absolute_expires_at > :now",
-                        "ExpressionAttributeValues": {":now": now}}},
-                    {"Put": put}])
+                    session_action, {"Put": put}])
                 return True
             except client.exceptions.TransactionCanceledException as error:
                 self._sessions._metadata(job.session_id)
@@ -87,12 +101,28 @@ class DynamoDBJobStore:
 
     def create(self, session_id: str, request_id: UUID, intent: QuestionIntent) -> Job:
         try:
+            try:
+                existing = self.get(session_id, request_id)
+            except JobUnavailable:
+                existing = None
+            if existing is not None:
+                if existing.intent is not intent:
+                    raise JobConflict()
+                return existing
             metadata = self._sessions._metadata(session_id)
+            if "question_job_count" not in metadata:
+                raise SessionStoreError()
             job = Job(session_id, request_id, intent, self._clock(),
                 datetime.fromisoformat(metadata["absolute_expires_at"]))
             if self._write(job, None):
                 return job
-            existing = self.get(session_id, request_id)
+            try:
+                existing = self.get(session_id, request_id)
+            except JobUnavailable:
+                metadata = self._sessions._metadata(session_id)
+                if metadata.get("question_job_count", 0) >= MAX_JOBS_PER_SESSION:
+                    raise JobLimitExceeded() from None
+                raise WorkerRetry() from None
             if existing.intent is not intent:
                 raise JobConflict()
             return existing

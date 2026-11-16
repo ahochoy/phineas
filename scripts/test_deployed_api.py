@@ -136,11 +136,39 @@ def verify_admission(request: Callable[..., dict]) -> None:
     print("Post-purge session and job rejection: passed")
 
 
+def verify_paused(request: Callable[..., dict]) -> None:
+    """Check disabled admission without freezing deterministic session operations."""
+    created = request("POST", "/sessions", {"sample_id": "analysis-demo"})
+    check(created["status"] == 201, "session_creation_failed")
+    session_id = created["body"]["session_id"]
+    print("Fresh session creation: passed")
+    try:
+        paused = request("POST", f"/sessions/{session_id}/question-jobs",
+            {"request_id": str(uuid4()), "question": "Tell me a joke"})
+        check(paused == {"status": 503, "body": {"detail": "demo_admissions_paused"}},
+            "expected_admission_pause_missing")
+        print("New job rejected by admission pause: passed")
+        check(request("GET", f"/sessions/{session_id}/analysis")["status"] == 200,
+            "analysis_unavailable_while_paused")
+        print("Deterministic analysis while paused: passed")
+    finally:
+        purged = request("DELETE", f"/sessions/{session_id}")
+        check(purged["status"] == 204, "session_purge_failed")
+        print("Session purge while paused: passed")
+    missing = request("GET", f"/sessions/{session_id}/summary")
+    check(missing == {"status": 404, "body": {"detail": "session_unavailable"}},
+        "post_purge_access_failed")
+    print("Post-purge access rejection: passed")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Private synthetic async deployment smoke test")
     parser.add_argument("function_name")
-    parser.add_argument("--admission-only", action="store_true",
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--admission-only", action="store_true",
         help="Check admission limits using unsupported questions instead of model generation")
+    modes.add_argument("--paused-only", action="store_true",
+        help="Check disabled admission, analysis, and purge without admitting jobs")
     args = parser.parse_args()
     template = json.loads((Path(__file__).resolve().parents[1] / "events/health.json").read_text())
     # One attempt: never silently repeat a mutating HTTP operation after an
@@ -191,7 +219,9 @@ def main() -> int:
         }
 
     try:
-        if args.admission_only:
+        if args.paused_only:
+            verify_paused(request)
+        elif args.admission_only:
             verify_admission(request)
         else:
             verify_deployment(request)

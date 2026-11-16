@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from phineas.analysis import analyze_transactions
+from phineas.admission import DAILY_JOB_LIMIT, DailyJobLimitExceeded, DemoAdmissionsPaused, utc_day
 from phineas.narratives import NarrativeProvider
 from phineas.questions import QuestionIntent, QuestionResponse, answer_intent, classify_question
 from phineas.sessions import SessionStore, SessionUnavailable, utc_now
@@ -105,7 +106,16 @@ class InMemoryJobStore:
         self._sessions = sessions
         self._clock = clock
         self._jobs: dict[tuple[str, UUID], Job] = {}
+        self._daily_counts: dict[str, int] = {}
+        self._admissions_enabled = True  # Explicit local/private reference default.
         self._lock = RLock()
+
+    def set_admissions_enabled(self, enabled: bool) -> None:
+        """Local operator/test control; never exposed as an HTTP endpoint."""
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled_requires_boolean")
+        with self._lock:
+            self._admissions_enabled = enabled
 
     def _sweep(self) -> None:
         for key, job in tuple(self._jobs.items()):
@@ -131,8 +141,15 @@ class InMemoryJobStore:
                 return existing
             if sum(sid == session_id for sid, _ in self._jobs) >= MAX_JOBS_PER_SESSION:
                 raise JobLimitExceeded()
-            job = Job(session_id, request_id, intent, self._clock(), session.absolute_expires_at)
+            if not self._admissions_enabled:
+                raise DemoAdmissionsPaused()
+            now = self._clock()
+            day = utc_day(now)
+            if self._daily_counts.get(day, 0) >= DAILY_JOB_LIMIT:
+                raise DailyJobLimitExceeded()
+            job = Job(session_id, request_id, intent, now, session.absolute_expires_at)
             self._jobs[key] = job
+            self._daily_counts[day] = self._daily_counts.get(day, 0) + 1
             return job
 
     def get(self, session_id: str, job_id: UUID) -> Job:

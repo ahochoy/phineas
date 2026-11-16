@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from phineas.application import IngestionSummary
+from phineas.admission import DailyJobLimitExceeded, DemoAdmissionsPaused
 from phineas.analysis import AnalysisResult
 from phineas.bedrock import AgentCoreNarrativeProvider
 from phineas.dynamodb_sessions import DynamoDBSessionStore
@@ -43,6 +44,14 @@ def create_app(store: SessionStore | None = None, narrative_provider: NarrativeP
                job_service: QuestionJobService | None = None) -> FastAPI:
     app = FastAPI(title="Phineas", version="0.1.0")
     sessions = SessionService(store if store is not None else InMemorySessionStore())
+
+    @app.exception_handler(DailyJobLimitExceeded)
+    async def daily_limit(request: Request, error: DailyJobLimitExceeded) -> JSONResponse:
+        return JSONResponse(status_code=429, content={"detail": "demo_daily_job_limit_reached"})
+
+    @app.exception_handler(DemoAdmissionsPaused)
+    async def admissions_paused(request: Request, error: DemoAdmissionsPaused) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": "demo_admissions_paused"})
 
     @app.exception_handler(JobLimitExceeded)
     async def job_limit(request: Request, error: JobLimitExceeded) -> JSONResponse:

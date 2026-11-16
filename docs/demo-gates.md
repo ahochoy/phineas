@@ -71,14 +71,23 @@ resources. Worker concurrency two limits parallelism, not total work or spend.
 Budgets notify; they do not stop requests. Do not label this gate sufficient for
 anonymous public access.
 
-## 2. Public admission and rate/cost controls — pending
+## 2. Public admission and rate/cost controls — shared admission verified privately
 
-Choose the public ingress/access boundary before exposing it. Protect session
-creation, new jobs, pending-job re-enqueues, and polling. Add an operator kill
-switch and a global admission allowance for paid work if a firm demo spending
-boundary is required. Define rejection and outage behavior. Gateway throttling
-alone must not be represented as a hard financial cap. No public URL or access
-model is selected by the first gate.
+The agreed allowance is 25 new jobs per UTC day across all sessions. The code
+now atomically reserves the shared day slot, the session slot, and the job while
+checking an operator admission-pause record. Idempotent recovery takes no extra
+slot; purge never refunds the day count. Missing control fails closed. The
+developer confirmed deploying the control record disabled and the updated API
+image. Deployed paused checks passed, followed by enabling the control through
+Terraform and passing the full generated-fee path. The shared 25/26 boundary and
+UTC rollover remain emulator-tested, not live load proof. See
+[global-admission.md](coaching/global-admission.md) for keys, rejection behavior,
+pause semantics, UTC rollover, tests, and the coached rollout sequence.
+
+Still choose the public ingress/access boundary and protect session creation,
+pending-job re-enqueues, and polling. The admission pause does not stop queued or
+running inference. Global job counts and gateway throttling are not hard dollar
+caps. No public URL or access model is selected by this slice.
 
 ## 3. Failure visibility and recovery — pending
 
@@ -99,6 +108,16 @@ Review current vendor fixes and all outstanding findings before public launch;
 record scope, evidence, residual risk, and a revisit trigger. A historical scan
 is not a permanent clean bill of health. Pin deployed artifacts by digest.
 
+At the 2026-11-16 global-admission checkpoint, API digest
+`sha256:6cb7b673e5b1f2f8243dd3cc78bd3948bff141c95b50097e9e0affe0f986604c`
+reported two high, ten medium, three low, and one undefined finding. Comparing
+stored scans identified the additional medium as CVE-2026-125709 in libstdc++.
+The runtime contains libstdc++6 14.2.0-19; Debian listed it as unfixed when
+reviewed. No direct C++ file-stream use was identified in application code,
+but transitive reachability was not ruled out. The private synthetic testing
+assessment was retained; this is an unresolved finding, not public approval.
+See the [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-125709).
+
 ## 5. Public surface and privacy checks — pending
 
 Verify synthetic allowlisting, request/body limits, generic validation errors,
@@ -110,7 +129,8 @@ tests pass.
 
 ## Stop condition
 
-This slice stops at privately deployed and verified per-session admission
-controls and the API IAM reduction. It does not create public ingress, choose
-authentication, or claim the other gates are complete. Infrastructure work
-remains a coached Terraform exercise.
+Per-session controls and the API IAM reduction are privately deployed and
+verified. Shared daily admission and pause controls have been locally tested
+and privately deployed, with paused/enabled happy-path checks confirmed. No public
+ingress or authentication is selected, and other gates remain incomplete.
+Infrastructure work remains a coached Terraform exercise.

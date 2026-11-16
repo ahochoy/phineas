@@ -33,3 +33,10 @@ variable "worker_image_digest" {
     error_message = "Provide a sha256 digest containing 64 lowercase hexadecimal characters."
   }
 }
+
+variable "demo_admissions_enabled" {
+  description = "Allow new question jobs through the shared demo admission gate."
+  type        = bool
+  default     = false
+  nullable    = false
+}

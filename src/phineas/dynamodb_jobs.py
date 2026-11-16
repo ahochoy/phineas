@@ -8,6 +8,10 @@ from uuid import UUID, uuid4
 from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import TypeAdapter, ValidationError
 
+from phineas.admission import (
+    DAILY_JOB_LIMIT, AdmissionControl, DailyCounter, DailyJobLimitExceeded,
+    DemoAdmissionsPaused, control_key, counter_expires_at, daily_counter_key,
+)
 from phineas.dynamodb_sessions import DynamoDBSessionStore
 from phineas.jobs import (
     LEASE, MAX_ATTEMPTS, MAX_JOBS_PER_SESSION, MAX_PENDING_AGE,
@@ -69,6 +73,7 @@ class DynamoDBJobStore:
             if revision is not None:
                 put["ExpressionAttributeValues"] = {":revision": revision}
             client = self._sessions._table().meta.client
+            admission_actions: list[dict] = []
             validity = "attribute_exists(pk) AND attribute_not_exists(purging) AND idle_expires_at > :now AND absolute_expires_at > :now"
             session_action = {"ConditionCheck": {"TableName": self._sessions._name,
                 "Key": self._sessions._key(job.session_id),
@@ -84,9 +89,22 @@ class DynamoDBJobStore:
                     "ConditionExpression": validity + " AND question_job_count >= :zero AND question_job_count < :limit",
                     "ExpressionAttributeValues": {":now": now, ":one": 1,
                         ":zero": 0, ":limit": MAX_JOBS_PER_SESSION}}}
+                admission_actions = [
+                    {"ConditionCheck": {"TableName": self._sessions._name,
+                        "Key": control_key(),
+                        "ConditionExpression": "schema_version = :version AND #enabled = :yes",
+                        "ExpressionAttributeNames": {"#enabled": "enabled"},
+                        "ExpressionAttributeValues": {":version": "1", ":yes": True}}},
+                    {"Update": {"TableName": self._sessions._name,
+                        "Key": daily_counter_key(job.created_at),
+                        "UpdateExpression": "SET admitted_jobs = if_not_exists(admitted_jobs, :zero) + :one, expires_at = if_not_exists(expires_at, :ttl)",
+                        "ConditionExpression": "attribute_not_exists(pk) OR (admitted_jobs >= :zero AND admitted_jobs < :limit AND expires_at = :ttl)",
+                        "ExpressionAttributeValues": {":zero": 0, ":one": 1,
+                            ":ttl": counter_expires_at(job.created_at), ":limit": DAILY_JOB_LIMIT}}},
+                ]
             try:
                 client.transact_write_items(TransactItems=[
-                    session_action, {"Put": put}])
+                    *admission_actions, session_action, {"Put": put}])
                 return True
             except client.exceptions.TransactionCanceledException as error:
                 self._sessions._metadata(job.session_id)
@@ -98,6 +116,21 @@ class DynamoDBJobStore:
             raise
         except (BotoCoreError, ClientError):
             raise SessionStoreError() from None
+
+    def _raise_admission_rejection(self, instant: datetime) -> None:
+        """Classify a failed admission without converting outages into quota resets."""
+        table = self._sessions._table()
+        item = table.get_item(Key=control_key(), ConsistentRead=True).get("Item")
+        control = AdmissionControl.model_validate(item)
+        if not control.enabled:
+            raise DemoAdmissionsPaused()
+        item = table.get_item(Key=daily_counter_key(instant), ConsistentRead=True).get("Item")
+        if item is not None:
+            counter = DailyCounter.model_validate(item)
+            if counter.expires_at != counter_expires_at(instant):
+                raise SessionStoreError()
+            if counter.admitted_jobs >= DAILY_JOB_LIMIT:
+                raise DailyJobLimitExceeded()
 
     def create(self, session_id: str, request_id: UUID, intent: QuestionIntent) -> Job:
         try:
@@ -122,13 +155,14 @@ class DynamoDBJobStore:
                 metadata = self._sessions._metadata(session_id)
                 if metadata.get("question_job_count", 0) >= MAX_JOBS_PER_SESSION:
                     raise JobLimitExceeded() from None
+                self._raise_admission_rejection(job.created_at)
                 raise WorkerRetry() from None
             if existing.intent is not intent:
                 raise JobConflict()
             return existing
         except SessionUnavailable:
             raise
-        except (BotoCoreError, ClientError, KeyError):
+        except (BotoCoreError, ClientError, KeyError, ValidationError):
             raise SessionStoreError() from None
 
     def _current(self, session_id: str, job_id: UUID) -> tuple[Job, int]:

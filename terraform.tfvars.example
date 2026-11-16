@@ -1,3 +1,4 @@
 budget_alert_email    = "you@example.com"
 monthly_budget_amount = 20
 api_image_digest = "sha256"
+worker_image_digest = "sha256"

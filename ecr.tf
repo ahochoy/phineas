@@ -27,7 +27,8 @@ data "aws_iam_policy_document" "api_image_retrieval" {
       test     = "ArnLike"
       variable = "aws:SourceArn"
       values = [
-        "arn:${data.aws_partition.current.partition}:lambda:us-east-2:${data.aws_caller_identity.current.account_id}:function:phineas-api"
+        "arn:${data.aws_partition.current.partition}:lambda:us-east-2:${data.aws_caller_identity.current.account_id}:function:phineas-api",
+        "arn:${data.aws_partition.current.partition}:lambda:us-east-2:${data.aws_caller_identity.current.account_id}:function:phineas-question-worker",
       ]
     }
   }

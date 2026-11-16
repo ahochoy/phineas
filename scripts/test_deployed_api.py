@@ -1,19 +1,98 @@
 import argparse
+from collections.abc import Callable
 import json
 from pathlib import Path
+import time
+from uuid import uuid4
 
 import boto3
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
+def check(condition: bool, reason: str) -> None:
+    if not condition:
+        raise RuntimeError(reason)
+
+
+def verify_deployment(request: Callable[..., dict], *,
+                      clock: Callable[[], float] = time.monotonic,
+                      pause: Callable[[float], None] = time.sleep,
+                      timeout: float = 180) -> None:
+    created = request("POST", "/sessions", {"sample_id": "analysis-demo"})
+    check(created["status"] == 201, "session_creation_failed")
+    session_id = created["body"]["session_id"]
+    print("Session creation: passed")
+    job_id = None
+
+    try:
+        analysis = request("GET", f"/sessions/{session_id}/analysis")
+        check(analysis["status"] == 200, "analysis_failed")
+        check(len(analysis["body"]["subscription_candidates"]) == 1, "analysis_mismatch")
+        print("DynamoDB-backed analysis: passed")
+
+        body = {"request_id": str(uuid4()), "question": "Explain fees"}
+        path = f"/sessions/{session_id}/question-jobs"
+        submitted = request("POST", path, body)
+        check(submitted["status"] == 202, "job_submission_failed")
+        job_id = submitted["body"]["job_id"]
+        print("Async job submission: passed")
+
+        repeated = request("POST", path, body)
+        check(repeated["status"] == 202 and repeated["body"]["job_id"] == job_id,
+            "job_idempotency_failed")
+        print("Idempotent resubmission: passed")
+
+        deadline = clock() + timeout
+        while clock() < deadline:
+            response = request("GET", f"/sessions/{session_id}/jobs/{job_id}")
+            check(response["status"] == 200, "job_poll_failed")
+            job = response["body"]
+            check(job["state"] != "failed", "async_job_failed")
+            if job["state"] == "succeeded":
+                result = job["result"]
+                check(result["intent"] == "fees", "job_intent_mismatch")
+                check(result["narrative"]["narrative_status"] == "generated", "narrative_not_generated")
+                check([fact["fact_id"] for fact in result["facts"]] == ["fee"], "job_facts_mismatch")
+                highlights = result["narrative"]["highlights"]
+                check(bool(highlights) and all(fact["fact_id"] == "fee" for fact in highlights),
+                    "job_highlights_mismatch")
+                print("SQS worker and AgentCore fee result: passed")
+                break
+            check(job["state"] in ("pending", "running"), "invalid_job_state")
+            pause(min(3, max(0, deadline - clock())))
+        else:
+            raise RuntimeError("async_job_timeout")
+    finally:
+        purged = request("DELETE", f"/sessions/{session_id}")
+        check(purged["status"] == 204, "session_purge_failed")
+        print("Session purge: passed")
+
+    missing = request("GET", f"/sessions/{session_id}/summary")
+    check(missing == {"status": 404, "body": {"detail": "session_unavailable"}},
+        "post_purge_session_access_failed")
+    if job_id is not None:
+        missing_job = request("GET", f"/sessions/{session_id}/jobs/{job_id}")
+        check(missing_job == {"status": 404, "body": {"detail": "session_unavailable"}},
+            "post_purge_job_access_failed")
+    print("Post-purge session and job rejection: passed")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Private synthetic async deployment smoke test")
     parser.add_argument("function_name")
     args = parser.parse_args()
-
-    client = boto3.client("lambda", region_name="us-east-2")
-    template = json.loads(Path("events/health.json").read_text())
+    template = json.loads((Path(__file__).resolve().parents[1] / "events/health.json").read_text())
+    # One attempt: never silently repeat a mutating HTTP operation after an
+    # ambiguous Lambda transport timeout. An orphaned synthetic session has TTL.
+    client = None
 
     def request(method: str, path: str, body: dict | None = None) -> dict:
+        nonlocal client
+        if client is None:
+            client = boto3.client("lambda", region_name="us-east-2",
+                config=Config(connect_timeout=5, read_timeout=130,
+                    retries={"total_max_attempts": 1, "mode": "standard"}))
         event = {
             **template,
             "rawPath": path,
@@ -39,52 +118,29 @@ def main() -> None:
             InvocationType="RequestResponse",
             Payload=json.dumps(event).encode(),
         )
-        payload = json.loads(response["Payload"].read())
-
-        if response.get("FunctionError"):
-            raise RuntimeError("Lambda invocation failed")
+        stream = response["Payload"]
+        try:
+            check(not response.get("FunctionError"), "lambda_function_error")
+            payload = json.loads(stream.read())
+        finally:
+            stream.close()
 
         return {
             "status": payload["statusCode"],
             "body": json.loads(payload.get("body") or "null"),
         }
 
-    created = request(
-        "POST", "/sessions", {"sample_id": "analysis-demo"}
-    )
-    assert created["status"] == 201
-    session_id = created["body"]["session_id"]
-    print("Session creation: passed")
-
     try:
-        analysis = request(
-            "GET", f"/sessions/{session_id}/analysis"
-        )
-        assert analysis["status"] == 200
-        assert len(analysis["body"]["subscription_candidates"]) == 1
-        print("DynamoDB-backed analysis: passed")
-
-        question = request(
-            "POST",
-            f"/sessions/{session_id}/questions",
-            {"question": "Explain fees"},
-        )
-        assert question["status"] == 200
-        assert question["body"]["intent"] == "fees"
-        assert (
-            question["body"]["narrative"]["narrative_status"]
-            == "generated"
-        )
-        print("AgentCore fee question: passed")
-    finally:
-        purged = request("DELETE", f"/sessions/{session_id}")
-        assert purged["status"] == 204
-        print("Session purge: passed")
-
-    missing = request("GET", f"/sessions/{session_id}/summary")
-    assert missing["status"] == 404
-    print("Post-purge access rejection: passed")
+        verify_deployment(request)
+        return 0
+    except RuntimeError as error:
+        print(f"Deployment check failed: {error}")
+    except (BotoCoreError, ClientError):
+        print("Deployment check failed: aws_invocation_error")
+    except (KeyError, TypeError, ValueError):
+        print("Deployment check failed: unexpected_response")
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -40,6 +40,7 @@ class SessionRecord:
 class SessionStore(Protocol):
     def create(self, sample_id: str, transactions: tuple[SanitizedTransaction, ...]) -> SessionRecord: ...
     def access(self, session_id: str) -> SessionRecord: ...
+    def peek(self, session_id: str) -> SessionRecord: ...
     def purge(self, session_id: str) -> None: ...
 
 
@@ -84,6 +85,15 @@ class InMemorySessionStore:
             record = replace(record, last_activity_at=now,
                 idle_expires_at=min(now + timedelta(minutes=30), record.absolute_expires_at))
             self._records[session_id] = record
+            return record
+
+    def peek(self, session_id: str) -> SessionRecord:
+        """Authorized internal read without extending user activity."""
+        with self._lock:
+            self._sweep(self._clock())
+            record = self._records.get(session_id)
+            if record is None:
+                raise SessionUnavailable()
             return record
 
     def purge(self, session_id: str) -> None:

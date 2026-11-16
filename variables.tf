@@ -23,3 +23,13 @@ variable "api_image_digest" {
     error_message = "Provide a sha256 digest containing 64 lowercase hexadecimal characters."
   }
 }
+
+variable "worker_image_digest" {
+  description = "Verified ECR image digest deployed to the question worker."
+  type        = string
+
+  validation {
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.worker_image_digest))
+    error_message = "Provide a sha256 digest containing 64 lowercase hexadecimal characters."
+  }
+}

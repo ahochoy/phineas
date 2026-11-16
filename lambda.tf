@@ -14,8 +14,9 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      PHINEAS_SESSIONS_TABLE = aws_dynamodb_table.sessions.name
-      PHINEAS_HARNESS_ARN    = aws_bedrockagentcore_harness.phineas.arn
+      PHINEAS_SESSIONS_TABLE     = aws_dynamodb_table.sessions.name
+      PHINEAS_HARNESS_ARN        = aws_bedrockagentcore_harness.phineas.arn
+      PHINEAS_QUESTION_QUEUE_URL = aws_sqs_queue.question_jobs.url
     }
   }
 

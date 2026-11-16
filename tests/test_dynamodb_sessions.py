@@ -61,6 +61,19 @@ def test_idle_expiration_works_without_ttl_deletion(database) -> None:
         store.purge(record.session_id)
 
 
+def test_worker_read_does_not_extend_idle_expiration(database) -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    store = DynamoDBSessionStore("test-sessions", clock=lambda: now)
+    record = store.create("analysis-demo", ingest_sample("analysis-demo"))
+    now += timedelta(minutes=5)
+    peeked = store.peek(record.session_id)
+    assert peeked.last_activity_at == record.last_activity_at
+    assert peeked.idle_expires_at == record.idle_expires_at
+    now = record.idle_expires_at
+    with pytest.raises(SessionUnavailable):
+        store.peek(record.session_id)
+
+
 def test_refresh_does_not_extend_absolute_deadline(database) -> None:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     store = DynamoDBSessionStore("test-sessions", clock=lambda: now)

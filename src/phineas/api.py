@@ -3,6 +3,7 @@
 from typing import Literal
 from datetime import datetime
 import os
+from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, ConfigDict
@@ -13,8 +14,11 @@ from phineas.application import IngestionSummary
 from phineas.analysis import AnalysisResult
 from phineas.bedrock import AgentCoreNarrativeProvider
 from phineas.dynamodb_sessions import DynamoDBSessionStore
+from phineas.dynamodb_jobs import DynamoDBJobStore
 from phineas.narratives import NarrativeProvider, NarrativeResult, generate_highlights
 from phineas.questions import QuestionRequest, QuestionResponse, SUGGESTED_QUESTIONS, answer_question
+from phineas.jobs import JobConflict, JobUnavailable, JobView, QueueUnavailable, QuestionJobService, SubmitQuestion, WorkerRetry
+from phineas.sqs_jobs import SqsJobQueue
 from phineas.samples import list_sample_ids, summarize_sample
 from phineas.sessions import InMemorySessionStore, SessionService, SessionStore, SessionUnavailable, SessionStoreError, SessionCapacityExceeded
 
@@ -35,9 +39,38 @@ class SessionCreated(BaseModel):
     absolute_expires_at: datetime
 
 
-def create_app(store: SessionStore | None = None, narrative_provider: NarrativeProvider | None = None) -> FastAPI:
+def create_app(store: SessionStore | None = None, narrative_provider: NarrativeProvider | None = None,
+               job_service: QuestionJobService | None = None) -> FastAPI:
     app = FastAPI(title="Phineas", version="0.1.0")
     sessions = SessionService(store if store is not None else InMemorySessionStore())
+
+    @app.exception_handler(WorkerRetry)
+    async def job_busy(request: Request, error: WorkerRetry) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": "job_store_busy"})
+
+    @app.exception_handler(JobUnavailable)
+    async def job_unavailable(request: Request, error: JobUnavailable) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": "job_unavailable"})
+
+    @app.exception_handler(JobConflict)
+    async def job_conflict(request: Request, error: JobConflict) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": "request_id_conflict"})
+
+    @app.exception_handler(QueueUnavailable)
+    async def queue_unavailable(request: Request, error: QueueUnavailable) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": "job_queue_unavailable"})
+
+    @app.post("/sessions/{session_id}/question-jobs", response_model=JobView, status_code=202)
+    def submit_question_job(session_id: str, request: SubmitQuestion) -> JobView:
+        if job_service is None:
+            raise HTTPException(status_code=503, detail="async_questions_not_configured")
+        return job_service.submit(session_id, request)
+
+    @app.get("/sessions/{session_id}/jobs/{job_id}", response_model=JobView)
+    def get_question_job(session_id: str, job_id: UUID) -> JobView:
+        if job_service is None:
+            raise HTTPException(status_code=503, detail="async_questions_not_configured")
+        return job_service.poll(session_id, job_id)
 
     @app.exception_handler(SessionStoreError)
     async def store_unavailable(request: Request, error: SessionStoreError) -> JSONResponse:
@@ -90,7 +123,10 @@ def create_app(store: SessionStore | None = None, narrative_provider: NarrativeP
 
     @app.delete("/sessions/{session_id}", status_code=204)
     def purge_session(session_id: str) -> Response:
-        sessions.purge(session_id)
+        if job_service is not None:
+            job_service.purge(session_id)
+        else:
+            sessions.purge(session_id)
         return Response(status_code=204)
 
     @app.get("/sessions/{session_id}/analysis", response_model=AnalysisResult)
@@ -122,7 +158,14 @@ def create_configured_app() -> FastAPI:
     provider = AgentCoreNarrativeProvider(arn, os.environ.get("AWS_REGION", "us-east-2")) if arn else None
     table_name = os.environ.get("PHINEAS_SESSIONS_TABLE")
     store = DynamoDBSessionStore(table_name, os.environ.get("AWS_REGION", "us-east-2")) if table_name else None
-    return create_app(store=store, narrative_provider=provider)
+    queue_url = os.environ.get("PHINEAS_QUESTION_QUEUE_URL")
+    job_service = None
+    if queue_url:
+        if store is None:
+            raise ValueError("async_questions_require_dynamodb")
+        job_service = QuestionJobService(store, DynamoDBJobStore(store),
+            SqsJobQueue(queue_url, os.environ.get("AWS_REGION", "us-east-2")))
+    return create_app(store=store, narrative_provider=provider, job_service=job_service)
 
 
 app = create_configured_app()

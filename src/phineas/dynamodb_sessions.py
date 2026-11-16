@@ -45,7 +45,8 @@ class DynamoDBSessionStore:
     def _metadata(self, session_id: str) -> dict:
         item = self._table().get_item(Key=self._key(session_id), ConsistentRead=True).get("Item")
         now = self._clock().isoformat()
-        if item is None or now >= min(item["idle_expires_at"], item["absolute_expires_at"]):
+        if (item is None or item.get("purging", False)
+                or now >= min(item["idle_expires_at"], item["absolute_expires_at"])):
             raise SessionUnavailable()
         return item
 
@@ -105,6 +106,7 @@ class DynamoDBSessionStore:
                         ExpressionAttributeValues={":now": now.isoformat(), ":idle": idle.isoformat(),
                             ":next": metadata["revision"] + 1},
                         ConditionExpression=(Attr("revision").eq(metadata["revision"])
+                            & Attr("purging").not_exists()
                             & Attr("idle_expires_at").gt(now.isoformat())
                             & Attr("absolute_expires_at").gt(now.isoformat())))
                     return SessionRecord(session_id, datetime.fromisoformat(metadata["created_at"]),
@@ -116,23 +118,56 @@ class DynamoDBSessionStore:
             raise
         except (BotoCoreError, ClientError, ValidationError, KeyError, ValueError):
             raise SessionStoreError() from None
+
+    def peek(self, session_id: str) -> SessionRecord:
+        """Read immutable session data without refreshing the idle deadline."""
+        try:
+            metadata = self._metadata(session_id)
+            rows = self._rows(session_id)
+            if len(rows) != metadata["transaction_count"] or metadata["schema_version"] != "1":
+                raise SessionStoreError()
+            transactions = tuple(SanitizedTransaction.model_validate_json(row["payload"]) for row in rows)
+            self._metadata(session_id)  # Recheck after paginated reads.
+            return SessionRecord(session_id, datetime.fromisoformat(metadata["created_at"]),
+                datetime.fromisoformat(metadata["last_activity_at"]),
+                datetime.fromisoformat(metadata["idle_expires_at"]),
+                datetime.fromisoformat(metadata["absolute_expires_at"]),
+                metadata["sample_id"], transactions)
+        except SessionUnavailable:
+            raise
+        except (BotoCoreError, ClientError, ValidationError, KeyError, ValueError):
             raise SessionStoreError() from None
 
     def purge(self, session_id: str) -> None:
+        """Fence writers first, then remove the entire partition, metadata last.
+
+        Cleanup is not atomic, but authorization is revoked before any deletion.
+        Keeping the marker until cleanup succeeds makes interrupted purges retryable.
+        """
         try:
-            self._metadata(session_id)
-            rows = self._rows(session_id)
+            table = self._table()
+            metadata = table.get_item(Key=self._key(session_id), ConsistentRead=True).get("Item")
+            if metadata is None:
+                raise SessionUnavailable()
             now = self._clock().isoformat()
-            self._table().meta.client.transact_write_items(TransactItems=[
-                {"Delete": {"TableName": self._name, "Key": self._key(session_id),
-                    "ConditionExpression": "idle_expires_at > :now AND absolute_expires_at > :now",
-                    "ExpressionAttributeValues": {":now": now}}},
-                *[{"Delete": {"TableName": self._name,
-                    "Key": {"pk": row["pk"], "sk": row["sk"]}}} for row in rows],
-            ])
-        except self._table().meta.client.exceptions.TransactionCanceledException:
-            # A concurrent purge or expiration may have invalidated metadata.
-            self._metadata(session_id)
-            raise SessionStoreError() from None
+            try:
+                table.update_item(Key=self._key(session_id),
+                    UpdateExpression="SET purging = :yes",
+                    ExpressionAttributeValues={":yes": True},
+                    ConditionExpression=(Attr("pk").exists() & (
+                        Attr("purging").eq(True) | (Attr("idle_expires_at").gt(now)
+                        & Attr("absolute_expires_at").gt(now)))))
+            except table.meta.client.exceptions.ConditionalCheckFailedException:
+                raise SessionUnavailable() from None
+            pages = table.meta.client.get_paginator("query").paginate(
+                TableName=self._name, KeyConditionExpression="pk = :pk",
+                ExpressionAttributeValues={":pk": f"SESSION#{session_id}"},
+                ProjectionExpression="pk, sk", ConsistentRead=True)
+            with table.batch_writer() as batch:
+                for page in pages:
+                    for item in page["Items"]:
+                        if item["sk"] != "METADATA":
+                            batch.delete_item(Key=item)
+            table.delete_item(Key=self._key(session_id))
         except (BotoCoreError, ClientError):
             raise SessionStoreError() from None

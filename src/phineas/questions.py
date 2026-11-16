@@ -51,7 +51,11 @@ def classify_question(question: str) -> QuestionIntent:
 
 def answer_question(analysis: AnalysisResult, question: str,
                     provider: NarrativeProvider | None) -> QuestionResponse:
-    intent = classify_question(question)
+    return answer_intent(analysis, classify_question(question), provider)
+
+
+def answer_intent(analysis: AnalysisResult, intent: QuestionIntent,
+                  provider: NarrativeProvider | None) -> QuestionResponse:
     if intent is QuestionIntent.UNSUPPORTED:
         return QuestionResponse(intent=intent,
             message="I can help with the suggested analysis questions. Please select one.",

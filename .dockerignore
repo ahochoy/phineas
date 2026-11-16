@@ -2,6 +2,7 @@
 # private files never reach the Docker builder, even when untracked by Git.
 **
 !Dockerfile
+!Dockerfile.worker
 !.dockerignore
 !pyproject.toml
 !uv.lock

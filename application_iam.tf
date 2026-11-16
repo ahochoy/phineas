@@ -33,6 +33,8 @@ data "aws_iam_policy_document" "api_execution" {
       "dynamodb:UpdateItem",
       "dynamodb:DeleteItem",
       "dynamodb:Query",
+      "dynamodb:BatchWriteItem",
+      "dynamodb:ConditionCheckItem",
     ]
 
     resources = [aws_dynamodb_table.sessions.arn]
@@ -60,6 +62,14 @@ data "aws_iam_policy_document" "api_execution" {
     ]
 
     resources = ["${aws_cloudwatch_log_group.api.arn}:*"]
+  }
+
+  statement {
+    sid    = "SubmitQuestionJobs"
+    effect = "Allow"
+
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.question_jobs.arn]
   }
 }
 

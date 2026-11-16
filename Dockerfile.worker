@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+
+# Build and run on the same OS/Python ABI; do not copy a Debian-built venv
+# into this Amazon Linux image.
+FROM public.ecr.aws/lambda/python:3.14 AS base
+RUN dnf upgrade -y --releasever=2023.12.20261102 && dnf clean all
+
+FROM base AS build
+COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
+WORKDIR /app
+ENV UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy
+COPY pyproject.toml uv.lock ./
+COPY src/ ./src/
+RUN uv sync --locked --no-dev --no-editable --python /var/lang/bin/python3.14
+
+FROM base AS runtime
+# The AWS runtime searches LAMBDA_TASK_ROOT first. Copy the installed project
+# and its locked production dependencies there; no venv launcher is needed.
+COPY --from=build /app/.venv/lib/python3.14/site-packages/ ${LAMBDA_TASK_ROOT}/
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+
+# Keep the AWS base image entrypoint. Lambda supplies its least-privileged user.
+CMD ["phineas.queue_worker.lambda_handler"]

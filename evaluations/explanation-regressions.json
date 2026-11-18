@@ -1,0 +1,24 @@
+[
+  {
+    "case_id": "fee_next_step_cross_topic",
+    "sample_id": "analysis-demo",
+    "question": "Explain fees",
+    "fact_ids": ["fee"],
+    "source_facts": [{"fact_id": "fee", "text": "1 outflow fee transaction(s) total USD 3.00."}],
+    "observed_response": "I found one fee totaling USD 3.00. The aggregate doesn't establish its cause, so you might want to check the statement description or account fee schedule for details. If you're unsure, comparing receipts or order history could help.",
+    "expected_review": "reject",
+    "failure_reasons": ["Receipts and order history are not a relevant fee-specific next step.", "The answer appends a second recommendation after the useful fee review step."],
+    "acceptable_example": "I found 1 fee totaling USD 3.00. I can't tell what caused it from this summary. Check the statement description for the fee details."
+  },
+  {
+    "case_id": "interest_unseen_total_comparison",
+    "sample_id": "analysis-demo",
+    "question": "Explain interest",
+    "fact_ids": ["interest"],
+    "source_facts": [{"fact_id": "interest", "text": "1 outflow interest transaction(s) total USD 1.25."}],
+    "observed_response": "I found one interest transaction totaling USD 1.25. I can't tell what caused it, but you might check the statement's interest section for details. This is just one transaction, so it's a small part of your overall interest charges.",
+    "expected_review": "reject",
+    "failure_reasons": ["The facts provide no broader interest total to compare against.", "A count of one does not establish that the charge is a small share of anything."],
+    "acceptable_example": "I found 1 interest charge totaling USD 1.25. I can't tell what rate or calculation led to it from this summary. Check the statement's interest section for that breakdown."
+  }
+]

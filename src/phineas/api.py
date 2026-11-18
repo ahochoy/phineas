@@ -16,11 +16,11 @@ from phineas.analysis import AnalysisResult
 from phineas.bedrock import AgentCoreNarrativeProvider
 from phineas.dynamodb_sessions import DynamoDBSessionStore
 from phineas.dynamodb_jobs import DynamoDBJobStore
-from phineas.narratives import NarrativeProvider, NarrativeResult, generate_highlights
+from phineas.narratives import FactCard, NarrativeProvider, NarrativeResult, build_fact_cards, generate_highlights
 from phineas.questions import QuestionRequest, QuestionResponse, SUGGESTED_QUESTIONS, answer_question
 from phineas.jobs import JobConflict, JobLimitExceeded, JobUnavailable, JobView, QueueUnavailable, QuestionJobService, SubmitQuestion, WorkerRetry
 from phineas.sqs_jobs import SqsJobQueue
-from phineas.samples import list_sample_ids, summarize_sample
+from phineas.samples import SamplePreview, list_sample_ids, preview_sample, summarize_sample
 from phineas.sessions import InMemorySessionStore, SessionService, SessionStore, SessionUnavailable, SessionStoreError, SessionCapacityExceeded
 
 
@@ -38,6 +38,11 @@ class SessionCreated(BaseModel):
     created_at: datetime
     idle_expires_at: datetime
     absolute_expires_at: datetime
+
+
+class SessionReport(BaseModel):
+    analysis: AnalysisResult
+    facts: tuple[FactCard, ...]
 
 
 def create_app(store: SessionStore | None = None, narrative_provider: NarrativeProvider | None = None,
@@ -150,6 +155,11 @@ def create_app(store: SessionStore | None = None, narrative_provider: NarrativeP
     def session_analysis(session_id: str) -> AnalysisResult:
         return sessions.analysis(session_id)
 
+    @app.get("/sessions/{session_id}/report", response_model=SessionReport)
+    def session_report(session_id: str) -> SessionReport:
+        analysis = sessions.analysis(session_id)
+        return SessionReport(analysis=analysis, facts=build_fact_cards(analysis))
+
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse()
@@ -157,6 +167,12 @@ def create_app(store: SessionStore | None = None, narrative_provider: NarrativeP
     @app.get("/samples", response_model=list[str])
     def samples() -> list[str]:
         return list(list_sample_ids())
+
+    @app.get("/samples/{sample_id}/preview", response_model=SamplePreview)
+    def sample_preview(sample_id: str) -> SamplePreview:
+        if sample_id not in list_sample_ids():
+            raise HTTPException(status_code=404, detail="unknown_sample")
+        return preview_sample(sample_id)
 
     @app.post("/analyses/sample-summary", response_model=IngestionSummary)
     def sample_summary(request: SampleSummaryRequest, response: Response) -> IngestionSummary:

@@ -23,8 +23,9 @@ def test_planted_findings_and_private_evidence() -> None:
     assert duplicate.amount == Decimal("20.00")
     assert duplicate.transaction_count == 2
     assert [(charge.charge_kind, charge.total_amount) for charge in result.charges] == [
-        ("fee", Decimal("3.00")), ("interest", Decimal("1.25"))]
-    assert result.purchase_analysis_excluded_count == 3
+        ("fee", Decimal("9.00")), ("interest", Decimal("7.50"))]
+    assert all(charge.transaction_count == 3 for charge in result.charges)
+    assert result.purchase_analysis_excluded_count == 10
     encoded = result.model_dump_json()
     for value in ("Example Streaming", "Sample Shop", "evidence_transaction_ids", "txn_", "original_description"):
         assert value not in encoded
@@ -45,7 +46,10 @@ def test_clean_controls_and_empty_statement() -> None:
     {"merchant_id": None, "normalized_merchant": None},
 ])
 def test_incomplete_or_inconsistent_monthly_evidence_is_not_recurring(changes: dict[str, object]) -> None:
-    rows = list(ingest_sample("analysis-demo")[:3])
+    statement = ingest_sample("analysis-demo")
+    candidate, = analyze_transactions(statement).subscription_candidates
+    rows = sorted((row for row in statement if row.transaction_id in candidate.evidence_transaction_ids),
+                  key=lambda row: row.posted_date)
     data = rows[2].model_dump()
     data.update(changes)
     rows[2] = SanitizedTransaction.model_validate(data)
@@ -54,8 +58,10 @@ def test_incomplete_or_inconsistent_monthly_evidence_is_not_recurring(changes: d
 
 def test_income_interest_and_unidentified_purchases_do_not_create_false_findings() -> None:
     rows = ingest_sample("analysis-demo")
-    earned = rows[6].model_copy(update={"direction": Direction.INFLOW})
-    unidentified = rows[3].model_copy(update={"merchant_id": None, "normalized_merchant": None})
+    earned = next(row for row in rows if row.transaction_kind is TransactionKind.INTEREST).model_copy(
+        update={"direction": Direction.INFLOW})
+    unidentified = next(row for row in rows if row.transaction_kind is TransactionKind.PURCHASE).model_copy(
+        update={"merchant_id": None, "normalized_merchant": None})
     result = analyze_transactions((earned, unidentified, unidentified))
     assert result.charges == ()
     assert result.possible_duplicates == ()

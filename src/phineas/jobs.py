@@ -227,18 +227,23 @@ class QuestionJobService:
             result=job.result, error_code=job.error_code)
 
 
+WorkerOutcome = Literal["completed", "terminal_observed", "terminal_failed", "invalidated"]
+
+
 class QuestionWorker:
     def __init__(self, sessions: SessionStore, jobs: JobStore, provider: NarrativeProvider) -> None:
         self._sessions, self._jobs, self._provider = sessions, jobs, provider
 
-    def process(self, message: JobMessage) -> None:
+    def process(self, message: JobMessage) -> WorkerOutcome:
         try:
             current = self._jobs.get(message.session_id, message.job_id)
             if current.intent is not message.intent:
                 raise JobUnavailable()
             claim = self._jobs.claim(message.session_id, message.job_id)
             if claim is None:
-                return
+                # claim may have exhausted attempts since the initial read.
+                terminal = self._jobs.get(message.session_id, message.job_id)
+                return "terminal_failed" if terminal.state == "failed" else "terminal_observed"
             session = self._sessions.peek(message.session_id)
             answer = answer_intent(analyze_transactions(session.transactions), claim.intent, self._provider)
             self._sessions.peek(message.session_id)
@@ -247,9 +252,10 @@ class QuestionWorker:
                     raise WorkerRetry()
                 if claim.attempts < MAX_ATTEMPTS:
                     raise WorkerRetry()
-                return
+                return "terminal_failed"
             if not self._jobs.finish(claim, answer):
                 raise WorkerRetry()
+            return "completed"
         except (SessionUnavailable, JobUnavailable):
             # Invalidated work is acknowledged without calling the model again.
-            return
+            return "invalidated"

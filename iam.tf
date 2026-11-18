@@ -17,6 +17,20 @@ locals {
     "arn:${data.aws_partition.current.partition}:bedrock:us-east-2::foundation-model/amazon.nova-micro-v1:0",
     "arn:${data.aws_partition.current.partition}:bedrock:us-west-2::foundation-model/amazon.nova-micro-v1:0",
   ]
+
+  sonnet_inference_profile_arn = join(":", [
+    "arn",
+    data.aws_partition.current.partition,
+    "bedrock",
+    "us-east-2",
+    data.aws_caller_identity.current.account_id,
+    "inference-profile/us.anthropic.claude-sonnet-4-6",
+  ])
+
+  sonnet_model_arns = [
+    for region in ["us-east-1", "us-east-2", "us-west-2"] :
+    "arn:${data.aws_partition.current.partition}:bedrock:${region}::foundation-model/anthropic.claude-sonnet-4-6"
+  ]
 }
 
 data "aws_iam_policy_document" "harness_assume_role" {
@@ -159,6 +173,21 @@ data "aws_iam_policy_document" "harness_execution" {
       variable = "cloudwatch:namespace"
       values   = ["bedrock-agentcore"]
     }
+  }
+
+  statement {
+    sid    = "InvokeSonnet"
+    effect = "Allow"
+
+    actions = [
+      "bedrock:InvokeModel",
+      "bedrock:InvokeModelWithResponseStream",
+    ]
+
+    resources = concat(
+      [local.sonnet_inference_profile_arn],
+      local.sonnet_model_arns,
+    )
   }
 }
 

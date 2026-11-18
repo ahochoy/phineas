@@ -157,6 +157,6 @@ def test_query_pagination_reads_all_records(database) -> None:
 
     with patch.object(store._table().meta.client, "get_paginator", return_value=SmallPages()):
         restored = store.access(record.session_id)
-        assert len(restored.transactions) == 8
+        assert len(restored.transactions) == 50
         store.purge(record.session_id)
     assert database.scan()["Count"] == 0

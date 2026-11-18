@@ -17,6 +17,7 @@ resource "aws_lambda_function" "api" {
       PHINEAS_SESSIONS_TABLE     = aws_dynamodb_table.sessions.name
       PHINEAS_HARNESS_ARN        = aws_bedrockagentcore_harness.phineas.arn
       PHINEAS_QUESTION_QUEUE_URL = aws_sqs_queue.question_jobs.url
+      AWS_LWA_REMOVE_BASE_PATH   = "/public"
     }
   }
 

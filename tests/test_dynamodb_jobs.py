@@ -39,7 +39,7 @@ def setup(monkeypatch):
         session = sessions.create("analysis-demo", ingest_sample("analysis-demo"))
         jobs = DynamoDBJobStore(sessions, clock=lambda: clock[0])
         provider = Mock()
-        provider.select.return_value = '{"fact_ids":["fee"]}'
+        provider.explain.return_value = '{"paragraphs":[{"text":"Your statement includes fees totaling USD 9.00. The aggregate does not establish its cause or whether it repeats.","fact_ids":["fee"]}]}'
         queue = Mock()
         service = QuestionJobService(sessions, jobs, queue)
         yield clock, sessions, session.session_id, jobs, provider, queue, service, table
@@ -63,12 +63,15 @@ def test_durable_result_duplicate_delivery_and_privacy(setup):
     clock[0] += timedelta(minutes=5)
     worker.process(message)
     worker.process(message)
-    assert provider.select.call_count == 1
+    assert provider.explain.call_count == 1
     assert sessions.peek(sid).idle_expires_at == idle
     done = jobs.get(sid, view.job_id)
     assert done.state == "succeeded"
     assert done.result is not None
     assert done.result.facts[0].fact_id == "fee"
+    assert done.result.explanation is not None
+    assert done.result.explanation.status == "generated"
+    assert done.result.explanation.paragraphs[0].fact_ids == ("fee",)
     assert service.submit(sid, request).job_id == view.job_id
     with pytest.raises(JobConflict):
         service.submit(sid, SubmitQuestion(request_id=request.request_id, question="Show subscriptions"))
@@ -100,7 +103,7 @@ def test_failures_and_crashes_are_bounded(setup):
     clock, sessions, sid, jobs, provider, queue, service, _ = setup
     view = service.submit(sid, SubmitQuestion(request_id=uuid4(), question="Explain fees"))
     worker = QuestionWorker(sessions, jobs, provider)
-    provider.select.side_effect = NarrativeUnavailable()
+    provider.explain.side_effect = NarrativeUnavailable()
     message = queue.enqueue.call_args.args[0]
     for _ in range(2):
         with pytest.raises(WorkerRetry):
@@ -145,10 +148,10 @@ def test_session_invalidated_between_read_and_write(setup):
 def test_purge_during_inference_discards_result(setup):
     _, sessions, sid, jobs, provider, queue, service, table = setup
     service.submit(sid, SubmitQuestion(request_id=uuid4(), question="Explain fees"))
-    def purge_then_reply(facts):
+    def purge_then_reply(intent, facts):
         service.purge(sid)
-        return '{"fact_ids":["fee"]}'
-    provider.select.side_effect = purge_then_reply
+        return '{"paragraphs":[{"text":"Your statement includes fees totaling USD 9.00. The aggregate does not establish its cause or whether it repeats.","fact_ids":["fee"]}]}'
+    provider.explain.side_effect = purge_then_reply
     QuestionWorker(sessions, jobs, provider).process(queue.enqueue.call_args.args[0])
     assert session_rows(table) == []
 

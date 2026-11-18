@@ -3,7 +3,7 @@
 ## Purpose
 
 Phineas is a privacy-first personal-finance analysis agent built with Python,
-FastAPI, MCP, Amazon Bedrock, and Terraform. It is a career portfolio project
+FastAPI, Amazon Bedrock, and Terraform. It is a career portfolio project
 intended to demonstrate thoughtful AI architecture, secure handling of
 sensitive data, model selection, evaluation, and production-minded AWS
 infrastructure.
@@ -22,6 +22,12 @@ Phineas is not a financial adviser, bank-integration product, payment system,
 or long-term financial record. The hosted portfolio experience operates only
 on bundled synthetic datasets. Arbitrary CSV upload is reserved for local or
 private operation.
+
+Release scope is recorded in `docs/roadmap.md`. V1 is the public synthetic
+statement demo and bounded AI Q&A using Nova Micro. Freeze new product features
+and model comparisons until its public deployment gates pass. V2 focuses on
+classification, category aggregation, and month-over-month trends; V3 focuses
+on anomaly detection and actionable nudges. MCP is not a committed deliverable.
 
 ## Collaboration Model
 
@@ -96,7 +102,7 @@ developer can revisit them without interrupting the implementation flow.
 - Amazon Bedrock receives selected aggregates, anonymous session-local merchant
   identifiers, and categories. It does not receive raw descriptions, readable
   merchant names, or individual transaction rows.
-- MCP tools accept opaque session identifiers and return aggregate results
+- If MCP is revisited, its tools must accept opaque session identifiers and return aggregate results
   only. Raw files must not be pasted into MCP tool arguments because those
   arguments may enter the calling model's context.
 - Logs contain operational metadata, timings, and safe reason codes only. They
@@ -118,6 +124,7 @@ aggregate input.
 
 Laya is a candidate non-generative typed-decision model for:
 
+- V2 spending-category classification after an explicit privacy-boundary review;
 - classifying ambiguous transaction kinds after initial PII redaction; and
 - classifying user-question intent and enforcing the supported conversational
   scope.
@@ -175,13 +182,13 @@ Initial modeling decisions:
 
 ## Interfaces
 
-The application exposes the same service layer through REST and MCP. Do not
-duplicate analysis logic inside transport handlers.
+The application exposes its service layer through REST. MCP is out of the
+committed roadmap; if revisited, reuse this service layer. Do not duplicate
+analysis logic inside transport handlers.
 
 Planned REST capabilities include health checks, session creation from an
 approved sample or private CSV, analysis access, bounded questions, and purge.
-Planned MCP tools cover statement analysis, subscriptions, fees, duplicates,
-and spending summaries using an existing opaque session ID.
+No MCP server is required for V1, V2, or V3.
 
 Conversation is constrained to approved analytical intents. Application code
 enforces the boundary before financial context reaches a generative model.
@@ -194,12 +201,15 @@ business-logic boundaries.
 2. Build the local deterministic core and synthetic evaluation data.
 3. Add FastAPI and short-lived local session behavior.
 4. Add Bedrock narrative generation and grounding checks.
-5. Add the MCP server over the existing application service layer.
-6. Deploy incrementally with Terraform, DynamoDB, Lambda, API Gateway, IAM,
-   logging controls, and budget protection.
-7. Evaluate and, if justified, deploy Laya.
-8. Polish the threat model, architecture documentation, demo, and interview
-   narrative.
+5. Finish V1 public deployment with the latest API image, Cloudflare frontend,
+   protected API ingress, vulnerability/privacy review, and final public URL proof.
+6. V2: review classification privacy boundaries, evaluate a category classifier
+   such as Laya, support larger synthetic datasets, and compute category/monthly
+   trends deterministically.
+7. V3: subscription price changes and other anomalies with evidence-grounded
+   nudges. Persistent monitoring/notifications require a separate lifecycle decision.
+8. Maintain the threat model, architecture documentation, demo, and interview
+   narrative as each release ships.
 
 Defer decisions until their evidence or milestone exists. In particular, do
 not prematurely select Laya confidence thresholds, its final hosting service,

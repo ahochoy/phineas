@@ -37,3 +37,8 @@ output "api_function_name" {
   description = "Lambda function name used for private invocation tests."
   value       = aws_lambda_function.api.function_name
 }
+
+output "public_api_origin" {
+  description = "Credential-protected API origin for the Cloudflare Worker."
+  value       = "${aws_apigatewayv2_api.public.api_endpoint}/${aws_apigatewayv2_stage.public.name}"
+}

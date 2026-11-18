@@ -1,8 +1,9 @@
-# Gates before a public synthetic demo
+# Public synthetic demo gates
 
-The deployed async happy path has passed private testing. That is not approval
-for public exposure. Keep hosted inputs bundled and synthetic, and keep the
-deployment private until the gates below have evidence.
+V1 is deployed as an invited, shared-password synthetic demo. See the
+[V1 release checkpoint](releases/v1.md) for the shipped scope, evidence, and
+limitations. The sections below distinguish local proof from deployed checks;
+they are not a claim of production certification or a comprehensive security audit.
 
 ## 1. Bounded question admission
 
@@ -71,7 +72,7 @@ resources. Worker concurrency two limits parallelism, not total work or spend.
 Budgets notify; they do not stop requests. Do not label this gate sufficient for
 anonymous public access.
 
-## 2. Public admission and rate/cost controls — shared admission verified privately
+## 2. Public admission and rate/cost controls — deployed
 
 The agreed allowance is 25 new jobs per UTC day across all sessions. The code
 now atomically reserves the shared day slot, the session slot, and the job while
@@ -84,14 +85,28 @@ UTC rollover remain emulator-tested, not live load proof. See
 [global-admission.md](coaching/global-admission.md) for keys, rejection behavior,
 pause semantics, UTC rollover, tests, and the coached rollout sequence.
 
-Still choose the public ingress/access boundary and protect session creation,
-pending-job re-enqueues, and polling. The admission pause does not stop queued or
-running inference. Global job counts and gateway throttling are not hard dollar
-caps. No public URL or access model is selected by this slice.
+Cloudflare Workers now provides the browser origin and route-limited proxy.
+Shared reviewer-password access is enforced before session creation, reports,
+questions, and polling; the separate origin credential is checked by API Gateway's
+Lambda authorizer. Missing/incorrect origin credentials were rejected in deployed
+checks. Gateway throttles and edge per-IP limits protect the request paths; purge
+remains available with the session capability after reviewer access expires.
+The admission pause does not stop queued/running inference. These controls are
+not hard dollar caps or identity verification. See
+[Cloudflare deployment](coaching/cloudflare-deployment.md).
 
-## 3. Failure visibility and recovery — pending
+## 3. Failure visibility and recovery — scoped V1 proof complete
 
-Track safe worker outcomes, terminal job failures, Lambda errors/timeouts and
+Safe delivery outcome instrumentation is deployed. The developer confirmed
+terminal-failure log/metric/alarm notification delivery and a visible synthetic
+DLQ-message alarm through SNS email. The test message was removed and the queues
+were checked empty. This is not proof of automatic exhausted-retry redrive.
+Native error/throttle/backlog alarms and additional observability expansion were
+explicitly deferred for V1. See
+[failure-visibility.md](coaching/failure-visibility.md) for the outcome contract,
+its counting limitations, and the coached rollout.
+
+For future operational expansion, consider safe worker outcomes, terminal job failures, Lambda errors/timeouts and
 throttles, queue age/backlog, and DLQ arrivals. Partial-batch failures may be
 returned from an otherwise successful Lambda invocation: Lambda Errors alone
 will not show every failed job. Record counts/timings/reason codes, never queue
@@ -100,13 +115,18 @@ delivery and test it; an alarm without a recipient is not an operational handoff
 Test transient failures, exhausted retries, and DLQ handling without unsafe
 redrive into expired sessions.
 
-## 4. Vulnerability and deployment review — pending
+## 4. Vulnerability and deployment review — V1 artifact reviewed
 
-The worker's patched image scan was clear at its checkpoint. The API retained
-two high glibc findings and additional medium/low findings for private testing.
-Review current vendor fixes and all outstanding findings before public launch;
-record scope, evidence, residual risk, and a revisit trigger. A historical scan
-is not a permanent clean bill of health. Pin deployed artifacts by digest.
+The API was moved from Debian to the patched Amazon Linux 2023 base family used
+by the worker. The developer confirmed a completed ECR scan with no reported
+findings for API digest
+`sha256:455e8d208a99cf803d1b4b2165b3533535ebed0258e8434147cdad2933628c1f`,
+then deployed it and passed private end-to-end checks including explanations.
+The worker's patched scan was also clear at its checkpoint. These are historical,
+point-in-time results, not permanent assurances. Rebuild/re-scan when base or
+dependency advisories change, and pin reviewed deployment artifacts by digest.
+
+### Historical Debian artifact (superseded, not the public API image)
 
 At the 2026-11-16 global-admission checkpoint, API digest
 `sha256:6cb7b673e5b1f2f8243dd3cc78bd3948bff141c95b50097e9e0affe0f986604c`
@@ -118,19 +138,26 @@ but transitive reachability was not ruled out. The private synthetic testing
 assessment was retained; this is an unresolved finding, not public approval.
 See the [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-125709).
 
-## 5. Public surface and privacy checks — pending
+## 5. Public surface and privacy checks — deployed checks recorded
 
-Verify synthetic allowlisting, request/body limits, generic validation errors,
-session expiration/purge, response no-store, safe application/platform logs, and
-the chosen browser origin/access boundary. Decide which docs and synchronous
-legacy routes should be exposed. Verify that a proxy does not log capability IDs
-embedded in URLs. Do not expose the service merely because happy-path smoke
-tests pass.
+Private-origin checks passed authentication rejection/acceptance, no-store,
+synthetic preview, blocked docs/OpenAPI, report, purge, and post-purge rejection.
+The public browser flow and mobile layout were exercised by the developer.
+An empty DELETE stream caused an edge rejection; the fix was regression-tested,
+deployed, and confirmed with a public HTTP 204 purge. The developer subsequently
+confirmed that shared-password access works. Guided buttons replace free-text
+input so V1 does not promise natural-language intent recognition.
+
+Body/route limits, safe error handling, password token signatures/expiry, and
+many lifecycle races have local tests; this is not live distributed abuse/load
+proof. Worker request logging is disabled and gateway access logs include only
+request ID/status. Providers still process operational network metadata.
 
 ## Stop condition
 
-Per-session controls and the API IAM reduction are privately deployed and
-verified. Shared daily admission and pause controls have been locally tested
-and privately deployed, with paused/enabled happy-path checks confirmed. No public
-ingress or authentication is selected, and other gates remain incomplete.
-Infrastructure work remains a coached Terraform exercise.
+The scoped V1 invited synthetic demo is available. Preserve its stated limits;
+do not expand into uploads, identity, retention, classifiers, or new analysis
+before an explicit follow-up release decision. Remaining ongoing work is normal
+maintenance: monitor alerts, review costs, rotate shared access when appropriate,
+and revisit artifact vulnerabilities. No further infrastructure expansion is a
+V1 feature gate.

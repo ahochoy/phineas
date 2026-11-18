@@ -8,7 +8,7 @@ resource "aws_bedrockagentcore_harness" "phineas" {
       model_id   = "us.amazon.nova-micro-v1:0"
       api_format = "converse_stream"
 
-      max_tokens  = 512
+      max_tokens  = 1024
       temperature = 0.1
     }
   }

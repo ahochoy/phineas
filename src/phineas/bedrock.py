@@ -1,6 +1,7 @@
 """AgentCore transport. All request fields are server-owned."""
 
 from collections.abc import Sequence
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -18,6 +19,18 @@ class AgentCoreNarrativeProvider:
         self._client = client
 
     def select(self, facts: Sequence[FactCard]) -> str:
+        return self._invoke(encode_facts(facts), max_tokens=512)
+
+    def explain(self, intent: str, facts: Sequence[FactCard]) -> str:
+        # Raw question/chat history never crosses this boundary. Only a closed
+        # intent and aggregate fact cards are accepted by the application.
+        if intent not in {"overview", "subscriptions", "fees", "interest", "duplicates", "coverage"}:
+            raise NarrativeUnavailable()
+        payload = json.dumps({"task": "explain", "intent": intent,
+                              "facts": [fact.model_dump() for fact in facts]})
+        return self._invoke(payload, max_tokens=1024)
+
+    def _invoke(self, payload: str, *, max_tokens: int) -> str:
         try:
             # Lazy construction lets the API start without AWS credentials and
             # lets credential failures follow the normal unavailable fallback.
@@ -25,14 +38,13 @@ class AgentCoreNarrativeProvider:
                 self._client = boto3.client("bedrock-agentcore", region_name=self._region,
                     config=Config(connect_timeout=5, read_timeout=90,
                         retries={"total_max_attempts": 1, "mode": "standard"}))
-            payload = encode_facts(facts)
             if len(payload.encode("utf-8")) > 32000:
                 raise NarrativeUnavailable()
             response = self._client.invoke_harness(
                 harnessArn=self._arn,
                 runtimeSessionId=str(uuid4()),
                 messages=[{"role": "user", "content": [{"text": payload}]}],
-                maxIterations=1, maxTokens=512, timeoutSeconds=60,
+                maxIterations=1, maxTokens=max_tokens, timeoutSeconds=60,
                 # A nonmatching server-owned allowlist prevents built-in tools
                 # from being exposed. No external request can override this.
                 allowedTools=["phineas_no_tools"],

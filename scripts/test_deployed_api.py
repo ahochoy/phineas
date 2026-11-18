@@ -18,7 +18,7 @@ def check(condition: bool, reason: str) -> None:
 def verify_deployment(request: Callable[..., dict], *,
                       clock: Callable[[], float] = time.monotonic,
                       pause: Callable[[float], None] = time.sleep,
-                      timeout: float = 180) -> None:
+                      timeout: float = 180, require_explanation: bool = False) -> None:
     created = request("POST", "/sessions", {"sample_id": "analysis-demo"})
     check(created["status"] == 201, "session_creation_failed")
     session_id = created["body"]["session_id"]
@@ -57,6 +57,14 @@ def verify_deployment(request: Callable[..., dict], *,
                 highlights = result["narrative"]["highlights"]
                 check(bool(highlights) and all(fact["fact_id"] == "fee" for fact in highlights),
                     "job_highlights_mismatch")
+                if require_explanation:
+                    explanation = result.get("explanation") or {}
+                    check(explanation.get("status") == "generated", "explanation_not_generated")
+                    paragraphs = explanation.get("paragraphs", [])
+                    check(bool(paragraphs) and all(
+                        isinstance(p.get("text"), str) and len(p["text"].strip()) >= 20
+                        and p.get("fact_ids") == ["fee"] for p in paragraphs), "explanation_contract_mismatch")
+                    print("Grounded conversational explanation: passed")
                 print("SQS worker and AgentCore fee result: passed")
                 break
             check(job["state"] in ("pending", "running"), "invalid_job_state")
@@ -169,7 +177,11 @@ def main() -> int:
         help="Check admission limits using unsupported questions instead of model generation")
     modes.add_argument("--paused-only", action="store_true",
         help="Check disabled admission, analysis, and purge without admitting jobs")
+    parser.add_argument("--require-explanation", action="store_true",
+        help="Require the new generated explanation contract in the normal async check")
     args = parser.parse_args()
+    if args.require_explanation and (args.admission_only or args.paused_only):
+        parser.error("--require-explanation requires the normal async check")
     template = json.loads((Path(__file__).resolve().parents[1] / "events/health.json").read_text())
     # One attempt: never silently repeat a mutating HTTP operation after an
     # ambiguous Lambda transport timeout. An orphaned synthetic session has TTL.
@@ -224,7 +236,7 @@ def main() -> int:
         elif args.admission_only:
             verify_admission(request)
         else:
-            verify_deployment(request)
+            verify_deployment(request, require_explanation=args.require_explanation)
         return 0
     except RuntimeError as error:
         print(f"Deployment check failed: {error}")

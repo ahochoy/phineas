@@ -15,11 +15,11 @@ def test_sample_summary_returns_exact_aggregate_values() -> None:
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     body = response.json()
-    assert body["transaction_count"] == 5
-    assert body["total_outflow"] == "71.48"
+    assert body["transaction_count"] == 10
+    assert body["total_outflow"] == "165.68"
     assert body["total_inflow"] == "105.00"
     assert body["transactions_by_kind"]["payment"] == 1
-    assert body["identified_merchant_count"] == 2
+    assert body["identified_merchant_count"] == 6
     for forbidden in ("Example Streaming", "Sample Grocery", "synthetic-001", "original_description"):
         assert forbidden not in response.text
 

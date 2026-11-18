@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from phineas.analysis import AnalysisResult
 from phineas.narratives import (
-    FactCard, NarrativeProvider, NarrativeResult, build_fact_cards, select_highlights,
+    ExplanationResult, FactCard, NarrativeProvider, NarrativeResult, build_fact_cards, explain_facts,
 )
 
 
@@ -42,6 +42,8 @@ class QuestionResponse(BaseModel):
     narrative: NarrativeResult
     # Full relevant deterministic facts remain available even if model selection fails.
     facts: tuple[FactCard, ...] = ()
+    # Additive field: older short-lived stored jobs remain readable.
+    explanation: ExplanationResult | None = None
 
 
 def classify_question(question: str) -> QuestionIntent:
@@ -59,7 +61,8 @@ def answer_intent(analysis: AnalysisResult, intent: QuestionIntent,
     if intent is QuestionIntent.UNSUPPORTED:
         return QuestionResponse(intent=intent,
             message="I can help with the suggested analysis questions. Please select one.",
-            narrative=NarrativeResult(narrative_status="skipped"))
+            narrative=NarrativeResult(narrative_status="skipped"),
+            explanation=ExplanationResult(status="skipped"))
     all_facts = build_fact_cards(analysis)
     prefixes = {
         QuestionIntent.SUBSCRIPTIONS: "subscription_",
@@ -75,6 +78,12 @@ def answer_intent(analysis: AnalysisResult, intent: QuestionIntent,
     if not facts:
         return QuestionResponse(intent=intent,
             message="No matching findings were detected by the current analysis policy.",
-            narrative=NarrativeResult(narrative_status="skipped"))
-    return QuestionResponse(intent=intent, message="Review the supplied findings and their limitations.",
-        facts=facts, narrative=select_highlights(facts, provider))
+            narrative=NarrativeResult(narrative_status="skipped"),
+            explanation=ExplanationResult(status="skipped"))
+    explanation = explain_facts(intent.value, facts, provider)
+    cited = {key for paragraph in explanation.paragraphs for key in paragraph.fact_ids}
+    # Preserve the v1 narrative envelope for old readers during deployment.
+    narrative = NarrativeResult(narrative_status=explanation.status,
+        highlights=tuple(fact for fact in facts if fact.fact_id in cited))
+    return QuestionResponse(intent=intent, message="Review the supporting findings and their limitations.",
+        facts=facts, narrative=narrative, explanation=explanation)

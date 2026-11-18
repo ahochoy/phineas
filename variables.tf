@@ -40,3 +40,10 @@ variable "demo_admissions_enabled" {
   default     = false
   nullable    = false
 }
+
+variable "operational_alert_email" {
+  description = "Email address receiving Phineas operational alerts."
+  type        = string
+  sensitive   = true
+  nullable    = false
+}

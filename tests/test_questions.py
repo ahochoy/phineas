@@ -28,16 +28,16 @@ def test_exact_phrase_intent_boundary(question: str, intent: QuestionIntent) -> 
 
 def test_fees_receive_only_fee_aggregates() -> None:
     provider = Mock()
-    provider.select.return_value = '{"fact_ids":["fee"]}'
+    provider.explain.return_value = '{"paragraphs":[{"text":"Your statement includes fees totaling USD 9.00. The aggregate does not establish its cause or whether it repeats.","fact_ids":["fee"]}]}'
     result = answer_question(analyze_transactions(ingest_sample("analysis-demo")), "Explain fees", provider)
     assert result.narrative.narrative_status == "generated"
-    assert [fact.fact_id for fact in provider.select.call_args.args[0]] == ["fee"]
+    assert [fact.fact_id for fact in provider.explain.call_args.args[1]] == ["fee"]
     assert [fact.fact_id for fact in result.facts] == ["fee"]
 
 
 def test_cross_topic_model_selection_is_rejected() -> None:
     provider = Mock()
-    provider.select.return_value = '{"fact_ids":["subscription_0"]}'
+    provider.explain.return_value = '{"paragraphs":[{"text":"This is a possible recurring charge, not a confirmed subscription.","fact_ids":["subscription_0"]}]}'
     result = answer_question(analyze_transactions(ingest_sample("analysis-demo")), "Explain fees", provider)
     assert result.narrative.narrative_status == "unavailable"
     assert result.facts[0].fact_id == "fee"
@@ -52,12 +52,12 @@ def test_unsupported_and_empty_findings_never_call_provider() -> None:
     empty = answer_question(report, "Explain fees", provider)
     assert empty.narrative.narrative_status == "skipped"
     assert empty.facts == ()
-    provider.select.assert_not_called()
+    provider.explain.assert_not_called()
 
 
 def test_provider_failure_preserves_question_facts() -> None:
     provider = Mock()
-    provider.select.side_effect = NarrativeUnavailable()
+    provider.explain.side_effect = NarrativeUnavailable()
     result = answer_question(analyze_transactions(ingest_sample("analysis-demo")), "Explain interest", provider)
     assert result.narrative.narrative_status == "unavailable"
     assert result.facts[0].fact_id == "interest"
@@ -65,7 +65,7 @@ def test_provider_failure_preserves_question_facts() -> None:
 
 def test_http_question_contract_and_purge() -> None:
     provider = Mock()
-    provider.select.return_value = '{"fact_ids":["fee"]}'
+    provider.explain.return_value = '{"paragraphs":[{"text":"Your statement includes fees totaling USD 9.00. The aggregate does not establish its cause or whether it repeats.","fact_ids":["fee"]}]}'
     with TestClient(create_app(narrative_provider=provider)) as client:
         assert "Explain fees" in client.get("/questions/suggestions").json()
         key = client.post("/sessions", json={"sample_id": "analysis-demo"}).json()["session_id"]
@@ -79,7 +79,7 @@ def test_http_question_contract_and_purge() -> None:
         assert client.post(url, json={"question": "x" * 201}).status_code == 422
         client.delete(f"/sessions/{key}")
         assert client.post(url, json={"question": "Explain fees"}).status_code == 404
-        assert provider.select.call_count == 1
+        assert provider.explain.call_count == 1
 
 
 def test_valid_out_of_scope_question_refreshes_idle_window() -> None:
@@ -93,4 +93,4 @@ def test_valid_out_of_scope_question_refreshes_idle_window() -> None:
         assert response.status_code == 200
         now += timedelta(minutes=2)
         assert client.get(f"/sessions/{record.session_id}/summary").status_code == 200
-    provider.select.assert_not_called()
+    provider.explain.assert_not_called()

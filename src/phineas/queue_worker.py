@@ -5,7 +5,9 @@ message deletion; this handler reports only deliveries that need another try.
 """
 
 from functools import lru_cache
+import json
 import os
+from time import monotonic
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -13,7 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from phineas.bedrock import AgentCoreNarrativeProvider
 from phineas.dynamodb_jobs import DynamoDBJobStore
 from phineas.dynamodb_sessions import DynamoDBSessionStore
-from phineas.jobs import JobMessage, QuestionWorker
+from phineas.jobs import JobMessage, QuestionWorker, WorkerOutcome, WorkerRetry
+from phineas.sessions import SessionStoreError
 
 
 class LambdaContext(Protocol):
@@ -36,6 +39,16 @@ class _Batch(BaseModel):
 # can still interrupt processing. Deploy with batch_size=1 and a 120s timeout.
 MIN_START_TIME_MS = 110_000
 
+DeliveryOutcome = WorkerOutcome | Literal["deferred", "retry_required", "invalid_message", "store_unavailable", "unexpected_failure"]
+
+
+def _emit_outcome(outcome: DeliveryOutcome, started: float) -> None:
+    # One plain JSON line: CloudWatch can filter it without parsing a logger
+    # prefix. Only closed-vocabulary outcomes and an operational timing leave
+    # this boundary. Never include IDs, intents, exception text, or payloads.
+    print(json.dumps({"event": "question_delivery", "schema_version": 1,
+        "outcome": outcome, "duration_ms": max(0, int((monotonic() - started) * 1000))}), flush=True)
+
 
 def process_sqs_batch(event: object, worker: QuestionWorker,
                       context: LambdaContext) -> dict[str, list[dict[str, str]]]:
@@ -50,17 +63,31 @@ def process_sqs_batch(event: object, worker: QuestionWorker,
 
     failures: list[dict[str, str]] = []
     for record in batch.Records:
+        started = monotonic()
+        outcome: DeliveryOutcome = "unexpected_failure"
         try:
             if context.get_remaining_time_in_millis() < MIN_START_TIME_MS:
                 failures.append({"itemIdentifier": record.messageId})
+                outcome = "deferred"
                 continue
             message = JobMessage.model_validate_json(record.body)
-            worker.process(message)
+            outcome = worker.process(message)
+        except ValidationError:
+            outcome = "invalid_message"
+            failures.append({"itemIdentifier": record.messageId})
+        except WorkerRetry:
+            outcome = "retry_required"
+            failures.append({"itemIdentifier": record.messageId})
+        except SessionStoreError:
+            outcome = "store_unavailable"
+            failures.append({"itemIdentifier": record.messageId})
         except Exception:
             # Transport boundary: transient failures and malformed bodies must
             # retry, eventually reaching the DLQ if they cannot be handled.
             # Do not log the exception: SDK/validation errors may embed data.
             failures.append({"itemIdentifier": record.messageId})
+        finally:
+            _emit_outcome(outcome, started)
     return {"batchItemFailures": failures}
 
 

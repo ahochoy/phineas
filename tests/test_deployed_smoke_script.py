@@ -39,6 +39,23 @@ def test_async_deployment_check_and_safe_output(capsys):
     assert "PRIVATE" not in output
 
 
+def test_explanation_deployment_gate_does_not_accept_legacy_only_result():
+    data = responses()
+    request = Mock(side_effect=data[:5] + [data[5]])
+    with pytest.raises(RuntimeError, match="^explanation_not_generated$"):
+        smoke.verify_deployment(request, require_explanation=True)
+    assert request.call_args.args[0] == "DELETE"
+
+
+def test_explanation_deployment_gate_with_new_result(capsys):
+    data = responses()
+    data[4]["body"]["result"]["explanation"] = {"status": "generated", "paragraphs": [
+        {"text": "Your fee deserves review; its cause is not established.", "fact_ids": ["fee"]},
+    ]}
+    smoke.verify_deployment(Mock(side_effect=data), require_explanation=True)
+    assert "Grounded conversational explanation: passed" in capsys.readouterr().out
+
+
 def test_polling_pending_then_success():
     data = responses()
     data.insert(4, {"status": 200, "body": {"state": "pending"}})

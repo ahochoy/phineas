@@ -1,0 +1,10 @@
+{
+  "name": "phineas-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/web/*.test.mjs tests/cloudflare/*.test.mjs",
+    "deploy:check": "wrangler deploy --dry-run --outdir .build/cloudflare"
+  },
+  "devDependencies": { "wrangler": "4.156.2" }
+}

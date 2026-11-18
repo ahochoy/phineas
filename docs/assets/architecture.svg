@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="880" viewBox="0 0 1280 880" role="img" aria-labelledby="title description">
+  <title id="title">Phineas V1: guided analysis with an aggregate-only model boundary</title>
+  <desc id="description">A browser connects to a Cloudflare Worker that serves static assets and proxies approved API routes. A server-held credential is checked by API Gateway and a Lambda authorizer using Secrets Manager. FastAPI performs deterministic analysis and stores sanitized transactions and job results in DynamoDB. Questions enter SQS as opaque references. A Lambda worker reads sanitized data and sends only aggregate facts to Bedrock AgentCore Harness and Nova Micro, receiving explanatory prose. Browser polling retrieves the stored answers through the authenticated API.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#555"/></marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #171717; }
+      .zone { fill: #fafafa; stroke: #d1d1d1; stroke-width: 1.5; }
+      .box { fill: white; stroke: #171717; stroke-width: 1.5; }
+      .label { font-size: 14px; font-weight: 700; letter-spacing: 1.4px; }
+      .name { font-size: 23px; font-weight: 700; }
+      .detail { font-size: 17px; }
+      .caption { font-size: 15px; fill: #444; }
+      .flow { fill: none; stroke: #555; stroke-width: 2; marker-end: url(#arrow); }
+      .both { marker-start: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1280" height="880" fill="white"/>
+  <rect width="1280" height="84" fill="#171717"/>
+  <text x="32" y="39" style="fill:white;font-size:30px;font-weight:700">phineas.</text>
+  <text x="32" y="65" style="fill:white;font-size:16px">V1 architecture · synthetic statement analysis + guided AI Q&amp;A</text>
+  <rect x="24" y="112" width="1232" height="158" class="zone"/>
+  <text x="44" y="139" class="label">PUBLIC EXPERIENCE</text>
+  <rect x="52" y="163" width="290" height="80" class="box"/>
+  <text x="72" y="195" class="name">Browser</text>
+  <text x="72" y="222" class="detail">Preview · analyze · ask · purge</text>
+  <rect x="488" y="163" width="380" height="80" class="box"/>
+  <text x="508" y="195" class="name">Cloudflare Worker</text>
+  <text x="508" y="222" class="detail">Static UI · password gate · API proxy</text>
+  <path d="M352 203 H478" class="flow both"/>
+  <text x="365" y="187" class="caption">Same-origin</text>
+  <text x="902" y="192" class="detail">Origin credential stays</text>
+  <text x="902" y="217" class="detail">server-side, not in the UI.</text>
+  <text x="715" y="291" class="caption">HTTPS + origin credential</text>
+  <rect x="24" y="310" width="1232" height="506" class="zone"/>
+  <path d="M678 243 V290 H40 V401 H50" class="flow"/>
+  <text x="44" y="337" class="label">AWS · AUTHENTICATED ORIGIN</text>
+  <rect x="60" y="355" width="300" height="95" class="box"/>
+  <text x="80" y="390" class="name">API Gateway</text>
+  <text x="80" y="418" class="detail">Lambda authorizer · throttling</text>
+  <path d="M370 401 H450" class="flow"/>
+  <rect x="460" y="355" width="300" height="95" class="box"/>
+  <text x="480" y="390" class="name">FastAPI / Lambda</text>
+  <text x="480" y="418" class="detail">Sessions + deterministic analysis</text>
+  <path d="M770 401 H920" class="flow both"/>
+  <text x="785" y="383" class="caption">Read / write</text>
+  <rect x="930" y="355" width="270" height="95" class="box"/>
+  <text x="950" y="390" class="name">DynamoDB</text>
+  <text x="950" y="418" class="detail">Sanitized rows + job results</text>
+  <rect x="60" y="550" width="300" height="80" class="box"/>
+  <text x="80" y="582" class="name">Secrets Manager</text>
+  <text x="80" y="609" class="detail">Origin credential</text>
+  <path d="M210 540 V460" class="flow"/>
+  <text x="225" y="501" class="caption">Authorizer reads</text>
+  <path d="M565 450 V540" class="flow"/>
+  <text x="580" y="496" class="caption">Opaque job references</text>
+  <rect x="460" y="550" width="220" height="80" class="box"/>
+  <text x="480" y="582" class="name">SQS</text>
+  <text x="480" y="609" class="detail">Question jobs</text>
+  <path d="M690 590 H770" class="flow"/>
+  <rect x="780" y="550" width="220" height="80" class="box"/>
+  <text x="800" y="582" class="name">Lambda worker</text>
+  <text x="800" y="609" class="detail">Findings + validation</text>
+  <path d="M1065 460 V493 H890 V540" class="flow both"/>
+  <text x="1080" y="491" class="caption">Read rows;</text>
+  <text x="1080" y="512" class="caption">store answers</text>
+  <path d="M890 640 V700" class="flow both"/>
+  <text x="913" y="664" class="caption">Selected aggregates ↓</text>
+  <text x="913" y="686" class="caption">Explanatory prose ↑</text>
+  <rect x="780" y="710" width="420" height="80" fill="#fff5ed" stroke="#f26922" stroke-width="2"/>
+  <text x="800" y="742" class="name">Bedrock AgentCore Harness</text>
+  <text x="800" y="769" class="detail">Amazon Nova Micro · no tools or chat memory</text>
+  <text x="60" y="718" class="label">MODEL PRIVACY BOUNDARY</text>
+  <text x="60" y="749" class="detail">No raw descriptions, readable merchant names,</text>
+  <text x="60" y="775" class="detail">individual transaction rows, or user-written questions.</text>
+  <rect x="24" y="840" width="8" height="21" fill="#f26922"/>
+  <text x="44" y="857" class="detail">Python owns financial calculations. The model explains supplied facts. Sessions are temporary.</text>
+</svg>

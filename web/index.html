@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Phineas — a privacy-first financial analysis demo using synthetic statements.">
+  <title>Phineas · Financial analysis</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.mjs"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to analysis workspace</a>
+  <header class="masthead">
+    <div class="header-inner">
+      <a class="wordmark" href="./" aria-label="Phineas home">phineas<span aria-hidden="true">.</span></a>
+      <p>Personal finance, made clearer.</p>
+      <span class="demo-label">SYNTHETIC DATA ONLY</span>
+    </div>
+  </header>
+
+  <main id="main" class="workspace">
+    <div class="intro">
+      <div>
+        <p class="eyebrow">YOUR ANALYSIS WORKSPACE</p>
+        <h1>A closer look at your statement.</h1>
+        <p class="intro-copy">Find recurring charges, review fees, and spot purchases worth a second look.</p>
+      </div>
+    </div>
+
+    <section id="demo-access" class="access-panel" aria-labelledby="access-heading">
+      <h2 id="access-heading">Enable analysis and AI questions</h2>
+      <p id="access-help">Have a demo password? Enter it to explore the analysis and ask Phineas questions. You can preview the synthetic records without one.</p>
+      <form id="access-form">
+        <label for="demo-password">Demo password</label>
+        <div class="access-controls">
+          <input id="demo-password" name="password" type="password" autocomplete="current-password" required maxlength="128" aria-describedby="access-help access-error" disabled>
+          <button id="unlock" class="primary" type="submit" disabled>Enable demo</button>
+        </div>
+        <p id="access-error" class="note" role="alert" hidden></p>
+      </form>
+      <p id="access-status" class="note" role="status">Checking demo access…</p>
+    </section>
+
+    <section class="sample-section" aria-labelledby="sample-heading">
+      <div class="section-heading"><h2 id="sample-heading">01 <span>Choose a sample statement</span></h2></div>
+      <div class="sample-content">
+        <form id="sample-form">
+          <fieldset>
+            <legend class="sr-only">Synthetic statement</legend>
+            <label class="sample-option">
+              <input type="radio" name="sample" value="analysis-demo" checked>
+              <span><strong>Everyday credit card</strong><span>50 transactions across January–March 2026. Recurring charges, fees, interest, and a possible duplicate.</span></span>
+            </label>
+            <label class="sample-option">
+              <input type="radio" name="sample" value="credit-card-demo">
+              <span><strong>A simpler statement</strong><span>10 transactions with purchases, a payment, and a refund. Fewer findings to review.</span></span>
+            </label>
+          </fieldset>
+          <div class="sample-actions">
+            <button class="primary" id="start" type="submit" disabled><span id="start-label">Start analysis</span> <span aria-hidden="true">→</span></button>
+            <p>Made-up transactions. No uploads or bank connection.</p>
+          </div>
+        </form>
+        <details id="sample-preview" class="sample-preview">
+          <summary>Preview records</summary>
+          <p class="note">All records from the selected synthetic CSV, before sanitization. Descriptions are shown here for demonstration only; they are not sent to the model or stored in sessions.</p>
+          <p id="sample-preview-status" class="note" role="status"></p>
+          <button id="sample-preview-retry" class="secondary" type="button" hidden>Retry sample preview</button>
+          <div id="sample-preview-table" class="sample-table-scroll" role="region" aria-label="Synthetic sample records" tabindex="0" hidden></div>
+        </details>
+      </div>
+    </section>
+
+    <p id="status" class="status" role="status">Connecting to Phineas…</p>
+    <div id="error-box" class="error-box" role="alert" hidden><p id="error-message"></p><button id="retry" type="button" class="secondary" hidden>Retry</button></div>
+
+    <div class="analysis-grid">
+      <section class="panel" aria-labelledby="findings-heading">
+        <div class="section-heading"><h2 id="findings-heading">02 <span>Your findings</span></h2></div>
+        <div class="panel-body">
+          <div id="findings-empty" class="empty-state">
+            <p class="empty-number" aria-hidden="true">01—02</p>
+            <h3>Start with a sample.</h3>
+            <p>Your cash-movement summary and findings will appear here. No financial advice. Just a clearer view.</p>
+          </div>
+          <div id="findings-content" hidden>
+            <p class="eyebrow" id="sample-name"></p>
+            <dl class="totals">
+              <div><dt>Money out</dt><dd id="outflow"></dd></div>
+              <div><dt>Money in</dt><dd id="inflow"></dd></div>
+              <div><dt>Transactions</dt><dd id="transaction-count"></dd></div>
+            </dl>
+            <p class="note">Cash movement is not a spending total. Payments and refunds remain included.</p>
+            <div id="findings"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel chat-panel" aria-labelledby="chat-heading">
+        <div class="section-heading"><h2 id="chat-heading">03 <span>Ask Phineas</span></h2><span class="heading-meta">FOCUSED QUESTIONS</span></div>
+        <div class="panel-body">
+          <p class="chat-intro">A few good places to start.</p>
+          <p class="note" id="question-help">Choose a question below. V1 supports these guided questions, not custom chat. Up to 10 questions per session; a shared daily allowance also applies.</p>
+          <div id="suggestions" class="suggestions" role="group" aria-label="Analysis questions" aria-describedby="question-help"></div>
+          <div id="conversation" class="conversation" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions">
+            <div class="assistant-message"><p class="speaker">PHINEAS</p><p>Choose a sample to explore what your statement can tell you.</p></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="session-bar">
+      <p id="session-note">No active session. Session access and chat stay in this tab’s memory only.</p>
+      <button id="reset" type="button" class="secondary" disabled>End session &amp; purge</button>
+    </div>
+    <footer><strong>Clarity, without the oversharing.</strong><p>Synthetic data only. Sessions expire after 30 minutes of inactivity or four hours total. End session purges stored session records. Refreshing loses this tab’s access; it does not delete server records. Not financial advice.</p></footer>
+  </main>
+  <noscript><p class="status">Enable JavaScript to use Phineas.</p></noscript>
+</body>
+</html>

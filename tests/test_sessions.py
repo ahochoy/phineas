@@ -21,7 +21,7 @@ def test_create_access_and_purge_session() -> None:
         assert len(key) >= 43
         summary = client.get(f"/sessions/{key}/summary")
         assert summary.status_code == 200
-        assert summary.json()["transaction_count"] == 5
+        assert summary.json()["transaction_count"] == 10
         assert key not in summary.text
         assert client.delete(f"/sessions/{key}").status_code == 204
         missing = client.get(f"/sessions/{key}/summary")

@@ -15,6 +15,18 @@ The local test validates HTTP behavior, not the Lambda event translation itself.
 - The `build` stage installs Python dependencies with `uv sync --locked --no-dev
   --no-editable`. A stale lockfile fails the build; tests, Moto, and Pyright are
   excluded. Non-editable installation puts the application into site-packages.
+- The API now shares the worker's AWS Lambda Python 3.14 / Amazon Linux 2023
+  base family. Both build and runtime inherit the same patched base with
+  `dnf upgrade --releasever=2023.12.20261112`; `uv` explicitly selects
+  `/var/lang/bin/python3.14`. Do not copy a Debian-built venv into this image.
+  The base tag is mutable, so use `--pull`, verify packages and scan the built
+  image, and pin the reviewed deployment digest. The old Debian API digest
+  remains historical evidence, not a deployment candidate approved for public use.
+- Unlike the native worker, this API clears the AWS base's handler entrypoint
+  with `ENTRYPOINT []`. Its CMD launches Uvicorn; Web Adapter remains the Lambda
+  bridge. Keeping the inherited entrypoint would misinterpret the HTTP command
+  as a handler name. The base's Runtime Interface Emulator is not the API's
+  local HTTP test path.
 - The `runtime` stage copies only that environment and the adapter, leaving uv,
   build caches, and the project source tree outside the final image.
 - The base Python version and tool/adapter tags are pinned. Tags are still mutable;
